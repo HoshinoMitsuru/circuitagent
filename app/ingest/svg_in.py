@@ -332,6 +332,36 @@ def _walk(el, m: Matrix, geo: Geometry, depth: int) -> None:
                     hint["p2"] = tuple(float(v) for v in p2.split(","))
                 except ValueError:
                     pass
+            # ---- 受控源的**控制支路**
+            # ★ 控制端也必须按**坐标**带过来，不能带节点名：
+            #   画布/渲染器都不该替解析器把名字定死（见 MEMORY「画布绝不写 data-ca-a/b」）。
+            #   控制端是"图上另一个位置"，那就老老实实给位置，让解析器自己算出
+            #   它落在哪个结点上 —— 与元件自身两个端子的处理完全一致。
+            ctl_mode = (el.get("data-ca-ctrl-mode") or "").strip().upper()
+            ctl: dict[str, Any] = {}
+            if ctl_mode in ("V", "I"):
+                ctl["mode"] = ctl_mode
+            for key, attr in (("cp1", "data-ca-ctrl-p1"), ("cp2", "data-ca-ctrl-p2")):
+                raw = el.get(attr)
+                if not raw:
+                    continue
+                try:
+                    ctl[key] = tuple(float(v) for v in raw.split(","))
+                except ValueError:
+                    pass
+            # 电流控制：被采样支路是**位号**（位号本来就是语义身份，不是节点名，
+            # 与 data-ca-ref 同一性质，所以这里可以直接带）
+            if el.get("data-ca-ctrl-ref"):
+                ctl["ref"] = el.get("data-ca-ctrl-ref")
+            # 自动插入的 0V 探针位号。带上它是为了**幂等**：丢了它，回导时会
+            # 以为还没插过探针，于是又串一个 0V 源、又多一个内部节点 ——
+            # 电学行为不变，但元件数每往返一次就涨一次。
+            if el.get("data-ca-ctrl-sense"):
+                ctl["sense"] = el.get("data-ca-ctrl-sense")
+            if el.get("data-ca-ctrl-expr"):
+                ctl["expr"] = el.get("data-ca-ctrl-expr")
+            if ctl:
+                hint["ctrl"] = ctl
             if "p1" in hint and "p2" in hint:
                 geo.hints.append(hint)
 

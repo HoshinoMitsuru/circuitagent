@@ -19,7 +19,9 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any
 
-from ..ir.model import Circuit, Component, CircuitError, SOLVABLE_KINDS
+from ..ir.model import (Circuit, Component, CircuitError, SOLVABLE_KINDS,
+                        VOLTAGE_OUTPUT_KINDS,
+                        declared_direction as _declared_direction)
 
 
 def reject_non_dc(circuit: Circuit) -> None:
@@ -38,16 +40,14 @@ def reject_non_dc(circuit: Circuit) -> None:
         )
 
 
-def declared_direction(c: Component) -> tuple[str, str]:
-    """该支路电流的参考方向（IR 约定）。
+def declared_direction(c: Component) -> tuple[str, str]:  # noqa: D103
+    """**转发**到 :func:`app.ir.model.declared_direction`，此处只作别名。
 
-    电压源特殊：IR 里 ``nodes[0]`` 是 + 端，但电流参考方向取电源**内部**
-    由 − 流向 +，也就是 ``nodes[1] -> nodes[0]``。这样"i > 0"直接读作
-    "这个电源在供电"，功率符号不用事后心算。
+    搬家的理由：网表层（``ir/spice.py``）渲染受控源表达式时也要用它，
+    而 IR 不该反过来依赖求解层。保留这个同名转发是为了不动散落各处的
+    ``from .base import declared_direction``。**改方向约定请改 IR 层那一份。**
     """
-    if c.kind == "V":
-        return (c.nodes[1], c.nodes[0])
-    return (c.nodes[0], c.nodes[1])
+    return _declared_direction(c)
 
 
 @dataclass

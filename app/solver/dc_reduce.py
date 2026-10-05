@@ -239,10 +239,19 @@ def _classify_shorted(c: Component, merged_into: str, report: ReductionReport) -
                 "0 V 电压源在直流下等价于导线；u = E = 0 给不出电流信息"
             )
 
-    else:                                        # L
+    elif c.kind == "L":
         entry["reason"] = (
             "电感本身就是直流短路路径；u_L = L·di/dt = 0 给不出电流信息"
         )
+
+    else:
+        # ★ 绝不靠"剩下的一定是电感"来兜底。受控源（E/G/H/F）一旦走到这里，
+        #   就会被套上一句"电感本身是短路路径"的解释 —— 而它根本不是电感，
+        #   报告里的理由就是编的。宁可在这里炸掉。
+        #   （正常路径下到不了：reduce_to_dc 见到"受控源 + C/L"会先明确报不支持。）
+        raise CircuitError(
+            f"{c.ref}: 化简层不认识元件类型 {c.kind} 落在同一节点上的情形，"
+            "无法判断它是否已被理想短路路径短接（内部一致性错误，不应触发）")
 
     report.shorted.append(entry)
 
@@ -289,6 +298,29 @@ def reduce_to_dc(circuit: Circuit, *, require_solvable: bool = True):
     has_c = any(c.kind == "C" for c in comps)
     has_l = any(c.kind == "L" for c in comps)
     report = ReductionReport()
+
+    # ★★ 受控源 + 储能元件：**明确报不支持，不许硬算**。
+    #
+    #   化简发生在三条求解路径**之前**，所以这里的任何差错都拦不住：
+    #   三法互校 / 跨实现对账 / 功率守恒，大家解的都是这张被化简过的电路，
+    #   会一致地给出同一个错答案（C→开路、L→短路那次事故就是这么发生的）。
+    #   而受控源正好是最怕这一点的元件：它的**控制量**可能就落在被移除的
+    #   电容支路或与电感合并掉的那对节点上 —— 化简后那个量已经不存在了，
+    #   却仍会被当成一个"零"或"某个别的量"参与进来，算出一个看着正常的解。
+    #   在把"受控源的控制量在化简下如何变换"想清楚之前，宁可不做。
+    controlled = [c.ref for c in comps if c.is_controlled]
+    storages = [c.ref for c in comps if c.kind in ("C", "L")]
+    if controlled and storages:
+        raise CircuitError(
+            f"本题同时含受控源（{', '.join(controlled)}）与储能元件"
+            f"（{', '.join(storages)}），本版本暂不支持求解这种组合。"
+            "原因是直流稳态化简发生在三条求解路径之前：电容被视为开路、"
+            "电感被视为短路之后，受控源的**控制量**可能正好落在被移除或被合并的"
+            "那条支路上，而化简后的电路仍然算得出一个「看起来正常」的解 ——"
+            "三法互校与跨实现对账都发现不了。"
+            "请按直流稳态手算化简（电容开路、电感短路）后再输入，"
+            "或改画成不含受控源的等效电路。"
+        )
 
     if not has_c and not has_l:
         return circuit.copy(), report
@@ -341,6 +373,9 @@ def reduce_to_dc(circuit: Circuit, *, require_solvable: bool = True):
             rewritten.append(Component(
                 ref=c.ref, kind=c.kind, nodes=(a, b), value=c.value,
                 evidence=c.evidence, geom=c.geom, note=c.note,
+                # ★ ctrl 必须一起带上。漏掉它 = 受控源悄悄退化成"独立源"，
+                #   而网表照样生成、解照样算得出来，只是把它按 0 处理了。
+                ctrl=c.ctrl,
             ))
             continue
         _classify_shorted(c, a, report)

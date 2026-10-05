@@ -23,18 +23,19 @@ html[data-theme="dark"]{
   --bad:#ff8b7d; --bad-soft:#2e1a18; --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 20px rgba(0,0,0,.35);
 }
 *{box-sizing:border-box}
+html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.6 var(--sans);
-  -webkit-font-smoothing:antialiased}
+  -webkit-font-smoothing:antialiased;display:flex;flex-direction:column;overflow:hidden}
 h1,h2,h3,h4{margin:0;font-weight:600;letter-spacing:.2px}
 button{font:inherit;cursor:pointer}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 
-/* ---------- 顶栏 ---------- */
-.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;
-  padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
-.brand{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:600}
+/* ---------- 顶栏（工作台标题条） ---------- */
+.top{flex:none;display:flex;align-items:center;gap:12px;
+  padding:9px 14px;background:var(--panel);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:600}
 .brand svg{color:var(--accent)}
-.brand small{font-weight:400;color:var(--ink3);font-size:12px;margin-left:2px}
+.brand small{font-weight:400;color:var(--ink3);font-size:12px;margin-left:2px;white-space:nowrap}
 .spacer{flex:1}
 .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;
   font-size:12px;border:1px solid var(--line);background:var(--panel2);color:var(--ink2)}
@@ -47,12 +48,41 @@ button{font:inherit;cursor:pointer}
 .ibtn:hover{background:var(--accent-soft);color:var(--accent);border-color:transparent}
 .ibtn svg{width:16px;height:16px}
 
-/* ---------- 布局 ---------- */
-.wrap{display:grid;grid-template-columns:330px minmax(0,1fr);gap:16px;padding:16px 20px 40px;
-  max-width:1640px;margin:0 auto;align-items:start}
-@media(max-width:980px){.wrap{grid-template-columns:1fr}}
-aside{display:flex;flex-direction:column;gap:14px;position:sticky;top:73px}
-@media(max-width:980px){aside{position:static}}
+/* ---------- 布局：IDE 式工作台（活动栏 + 侧栏 + 主区 + 状态栏） ---------- */
+.app{flex:1;min-height:0;display:grid;grid-template-columns:48px 316px minmax(0,1fr);
+  gap:0;padding:0;max-width:none;margin:0;align-items:stretch}
+/* 活动栏：八个功能面板的图标入口（窄屏折叠成顶栏下的一横条） */
+.activity{display:flex;flex-direction:column;align-items:center;gap:4px;
+  padding:10px 0;background:var(--panel2);border-right:1px solid var(--line)}
+.activity .brandmark{width:34px;height:34px;display:flex;align-items:center;
+  justify-content:center;color:var(--accent);margin-bottom:8px}
+.activity .brandmark svg{width:22px;height:22px}
+/* 侧栏（导入 + 读图依据）。被 JS 无耦合引用，只按 id 找 */
+aside{display:flex;flex-direction:column;gap:14px;min-height:0;overflow-y:auto;
+  padding:14px;border-right:1px solid var(--line);background:var(--bg)}
+main.zone{min-width:0;min-height:0;display:flex;flex-direction:column;
+  padding:14px 18px 18px;overflow-y:auto}
+/* 状态栏：健康 chips 落到这里（原在顶栏）。三法可用性一眼可见 */
+.statusbar{flex:none;display:flex;align-items:center;gap:12px;
+  padding:5px 14px;background:var(--panel);border-top:1px solid var(--line);
+  font-size:12px;color:var(--ink2);overflow-x:auto;white-space:nowrap}
+.statusbar .chips{flex-wrap:nowrap}
+.statusbar .badge{border:none;background:transparent;padding:2px 4px}
+.statusbar .badge svg{width:12px;height:12px}
+@media(max-width:1180px){
+  /* 窄屏：活动栏压成顶部横向图标条，侧栏（含导入入口！）不能藏 —— 藏了就没法导图。
+     改为单列堆叠：活动条 → 侧栏 → 主区，各自仍独立滚动。 */
+  .app{grid-template-columns:48px minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr)}
+  .activity{grid-column:1 / -1;grid-row:1;flex-direction:row;justify-content:flex-start;
+    padding:6px 10px;border-right:none;border-bottom:1px solid var(--line)}
+  .activity .brandmark{margin:0 8px 0 0;width:auto;height:auto}
+  .activity .tab{flex-direction:row;width:auto;height:34px;padding:5px 10px;font-size:12px}
+  .activity .tab svg{width:15px;height:15px}
+  .activity .tab .cnt{position:static;margin:0}
+  aside{grid-column:1 / -1;grid-row:2;max-height:44vh}
+  main.zone{grid-column:1 / -1;grid-row:3}
+  .brand small{display:none}
+}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
 .card>header{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--line2);
   font-size:13px;font-weight:600}
@@ -101,9 +131,9 @@ tr.dim input{text-decoration:line-through}
 .drop p{margin:0;font-size:13px}
 .drop .sub{font-size:12px;color:var(--ink3);margin-top:5px}
 
-/* ---------- 标签页 ---------- */
-.tabs{display:flex;flex-wrap:wrap;gap:4px;padding:5px;background:var(--panel);border:1px solid var(--line);
-  border-radius:var(--r);box-shadow:var(--shadow);overflow-x:auto}
+/* ---------- 面板切换（活动栏 + 横向 tabs 两用；探针要求 class 以 tab 开头） ---------- */
+.tabs{display:flex;flex-wrap:wrap;gap:4px;padding:0;margin:0 0 12px;list-style:none;
+  background:transparent;border:none;box-shadow:none;overflow-x:auto}
 .tab{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:7px;border:none;
   background:transparent;color:var(--ink2);font-size:13px;font-weight:500;white-space:nowrap}
 .tab svg{width:14px;height:14px}
@@ -112,8 +142,15 @@ tr.dim input{text-decoration:line-through}
 .tab .cnt{min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--warn-soft);
   color:var(--warn);font-size:11px;font-weight:600;display:inline-flex;align-items:center;
   justify-content:center;font-family:var(--mono)}
-.panel{margin-top:14px;display:none;flex-direction:column;gap:14px}
+.panel{margin-top:0;display:none;flex-direction:column;gap:14px}
 .panel.show{display:flex}
+/* 活动栏形态的页签：竖排图标 + 悬停显字（形状仍是 .tab，探针认 class="tab…"） */
+.activity .tab{flex-direction:column;gap:3px;width:40px;height:42px;padding:4px 2px;
+  border-radius:9px;font-size:10px;line-height:1.15;color:var(--ink3)}
+.activity .tab svg{width:19px;height:19px}
+.activity .tab:hover{background:var(--panel);color:var(--ink)}
+.activity .tab.active{background:var(--accent-soft);color:var(--accent-ink)}
+.activity .tab .cnt{position:absolute;margin:-26px 0 0 26px;min-width:16px;height:16px;font-size:10px}
 
 /* ---------- 叠图 ---------- */
 .ovbox{position:relative;width:100%;background:
@@ -144,6 +181,21 @@ tr:last-child td{border-bottom:none}
 tbody tr:hover{background:var(--panel2)}
 td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
 .tsc{overflow-x:auto;margin:0 -1px}
+
+/* ---------- 工作台细节打磨 ---------- */
+/* 侧栏与主区独立滚动：细一点的滚动条，避免占视觉宽度 */
+aside::-webkit-scrollbar,main.zone::-webkit-scrollbar{width:8px;height:8px}
+aside::-webkit-scrollbar-thumb,main.zone::-webkit-scrollbar-thumb{
+  background:var(--line);border-radius:4px}
+aside::-webkit-scrollbar-thumb:hover,main.zone::-webkit-scrollbar-thumb:hover{
+  background:var(--ink3)}
+/* 状态栏徽标：一行排开不换行，空间不够横向滚 */
+.statusbar .chips{display:flex;gap:6px}
+/* 侧栏卡片在窄滚动容器里的呼吸感 */
+aside .card{flex:none}
+/* 主区面板进入视口的轻微过渡（纯 opacity，不移动布局） */
+.panel.show{animation:fadein .16s ease}
+@keyframes fadein{from{opacity:.4}to{opacity:1}}
 td input,td select{padding:4px 7px;font-size:12.5px;border-radius:6px}
 td .nm{width:74px}
 td .nd{width:66px}
@@ -155,6 +207,40 @@ td .vl{width:92px}
 .chip.bad{background:var(--bad-soft);color:var(--bad)}
 .chip.flat{background:var(--panel2);color:var(--ink2);border:1px solid var(--line)}
 .chip svg{width:11px;height:11px}
+/* 结构确认表：受控源那一行下面挂的控制关系说明。
+   它必须占用一整行（colspan 全部列），因为要说清"控制量取自哪里"、
+   "增益是什么单位"、"用的是标准形还是自定义表达式"—— 塞进一个格子里
+   只能缩写，而受控源最怕的就是缩写（受控 / 独立看错一眼，方程就完全不同）。 */
+tr.ctlrow>td{background:var(--accent-soft);border-bottom:1px solid var(--line);
+  padding:7px 9px 9px;font-size:12.5px;line-height:1.7;color:var(--ink2)}
+tr.ctlrow b{color:var(--ink)}
+tr.ctlrow:hover>td{background:var(--accent-soft)}
+/* 数值 + 单位后缀（受控源的"数值"是增益，后缀是 μ / gm / rm / α） */
+.valcell{display:flex;align-items:center;gap:5px}
+.valcell input{flex:1 1 auto;min-width:0}
+.valcell .hint{flex:none;font-size:11.5px}
+
+/* ---------- 参数页 ---------- */
+td .sy{width:96px}
+/* 分组行：把"电压 u / 电流 i / 元件值"分开，并在组头写明 SI 单位 */
+tr.grp>td{background:var(--panel2);border-top:1px solid var(--line);
+  border-bottom:1px solid var(--line);font-size:12.5px;padding:7px 9px;color:var(--ink2)}
+tr.grp:hover>td{background:var(--panel2)}
+/* 受控源卡片 */
+.ctlcard{border:1px solid var(--line);border-radius:9px;background:var(--panel2);
+  padding:11px 13px}
+.ctlcard+.ctlcard{margin-top:11px}
+.ctltop{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
+.ctlgrid{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin-top:8px;font-size:12.5px}
+.ctlgrid>span:nth-child(odd){color:var(--ink3);white-space:nowrap}
+.ctlgrid>span:nth-child(even){color:var(--ink);word-break:break-all}
+textarea.expr{width:100%;font-family:var(--mono);font-size:13px;line-height:1.6}
+.exprhint{margin-top:5px;min-height:18px}
+/* 可插入的参数名 */
+.pchips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.pchip{padding:3px 9px;border-radius:999px}
+.grpname{font-size:11.5px;color:var(--ink3);margin-right:2px;margin-left:8px}
+.pchips .grpname:first-child{margin-left:0}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;font-size:13px}
 .kv dt{color:var(--ink2);white-space:nowrap}
 .kv dd{margin:0;font-family:var(--mono)}
@@ -241,11 +327,23 @@ pre{margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.65;overflow-
     电路读图 · 三法对账<small>几何定拓扑 / 三法互校 / 功率守恒收口</small>
   </div>
   <div class="spacer"></div>
-  <div id="health" class="chips"></div>
   <button class="ibtn" id="themeBtn" title="切换明暗主题"></button>
 </header>
 
-<div class="wrap">
+<div class="app">
+  <nav class="activity" id="tabs" aria-label="功能面板">
+    <div class="brandmark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h3l2-5 3 10 2-5h6"/></svg></div>
+    <button class="tab active" data-p="overlay" title="叠图对账"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15l5-4 4 3 3-2 6 5"/></svg>对账</button>
+    <button class="tab" data-p="draw" title="手绘电路"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l4-1 9-9-3-3-9 9z"/><path d="M14 7l3 3"/><path d="M4 20h6"/></svg>手绘</button>
+    <button class="tab" data-p="confirm" title="结构确认"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 11l2.5 2.5L16 8"/><rect x="3.5" y="4.5" width="17" height="15" rx="2"/></svg>确认<span class="cnt" id="cntConfirm" hidden>0</span></button>
+    <button class="tab" data-p="params" title="参数"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>参数<span class="cnt" id="cntParams" hidden>0</span></button>
+    <button class="tab" data-p="netlist" title="网表"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1.4"/><circle cx="4" cy="12" r="1.4"/><circle cx="4" cy="18" r="1.4"/></svg>网表</button>
+    <button class="tab" data-p="ir" title="中间表示 IR"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 8l-4 4 4 4m6-8 4 4-4 4"/></svg>IR</button>
+    <button class="tab" data-p="solve" title="求解报告"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 19V9m5 10V5m5 14v-7m5 7V8"/></svg>求解</button>
+    <button class="tab" data-p="figure" title="报告插图"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h3l2-5 3 10 2-5h6"/></svg>插图</button>
+    <button class="tab" data-p="vision" title="视觉通道"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>视觉<span class="cnt" id="cntVision" hidden>0</span></button>
+  </nav>
+
   <aside>
     <section class="card">
       <header><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 16V4m0 0L8 8m4-4 4 4M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></svg>导入电路图</header>
@@ -296,18 +394,7 @@ pre{margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.65;overflow-
     </section>
   </aside>
 
-  <section>
-    <nav class="tabs" id="tabs">
-      <button class="tab active" data-p="overlay"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15l5-4 4 3 3-2 6 5"/></svg>叠图对账</button>
-      <button class="tab" data-p="draw"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l4-1 9-9-3-3-9 9z"/><path d="M14 7l3 3"/><path d="M4 20h6"/></svg>手绘电路</button>
-      <button class="tab" data-p="confirm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 11l2.5 2.5L16 8"/><rect x="3.5" y="4.5" width="17" height="15" rx="2"/></svg>结构确认<span class="cnt" id="cntConfirm" hidden>0</span></button>
-      <button class="tab" data-p="netlist"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1.4"/><circle cx="4" cy="12" r="1.4"/><circle cx="4" cy="18" r="1.4"/></svg>网表</button>
-      <button class="tab" data-p="ir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 8l-4 4 4 4m6-8 4 4-4 4"/></svg>IR</button>
-      <button class="tab" data-p="solve"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 19V9m5 10V5m5 14v-7m5 7V8"/></svg>求解报告</button>
-      <button class="tab" data-p="figure"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h3l2-5 3 10 2-5h6"/></svg>报告插图</button>
-      <button class="tab" data-p="vision"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>视觉通道<span class="cnt" id="cntVision" hidden>0</span></button>
-    </nav>
-
+  <main class="zone">
     <article class="panel show" data-p="overlay">
       <div class="card"><header><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15l5-4 4 3 3-2 6 5"/></svg>叠图对账<span class="spacer"></span><span class="hint" id="ovInfo"></span></header>
         <div class="body" id="ovBody"><div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15l5-4 4 3 3-2 6 5"/></svg>先导入一张图</div></div>
@@ -326,13 +413,20 @@ pre{margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.65;overflow-
 
     <article class="panel" data-p="draw"></article>
     <article class="panel" data-p="confirm"></article>
+    <article class="panel" data-p="params"></article>
     <article class="panel" data-p="netlist"></article>
     <article class="panel" data-p="ir"></article>
     <article class="panel" data-p="solve"></article>
     <article class="panel" data-p="figure"></article>
     <article class="panel" data-p="vision"></article>
-  </section>
+  </main>
 </div>
+
+<footer class="statusbar">
+  <div id="health" class="chips"></div>
+  <div class="spacer"></div>
+  <span class="hint">几何定拓扑 · 三法互校 · 功率守恒收口</span>
+</footer>
 
 <div class="toast" id="toast"></div>
 
@@ -355,6 +449,11 @@ const IC = {
   edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 20h4L20 8l-4-4L4 16z"/></svg>',
   eye:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>',
   down:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 4v12m0 0 4-4m-4 4-4-4M4 20h16"/></svg>',
+  // 参数页用：滑杆（参数设定）、标签（命名）、函数（表达式）、链节（控制关系）
+  sliders:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>',
+  tag:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 3H4v7l10 10 7-7z"/><circle cx="7.5" cy="6.5" r="1.3"/></svg>',
+  fx:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 20c3 0 3-6 3-9s0-8 3-8M4 11h8M15 13l6 6m0-6-6 6"/></svg>',
+  link:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 13a4 4 0 0 0 5.7 0l3-3A4 4 0 0 0 13 4.3l-1.5 1.5"/><path d="M14 11a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 19.7l1.5-1.5"/></svg>',
 };
 
 /* ============================================================
@@ -362,7 +461,19 @@ const IC = {
    ============================================================ */
 const S = {
   sid:null, payload:null, ir:null, pack:null, solvePayload:null, solveError:null,
-  ovOpacity:.9, ovShow:{img:true, svg:true}, theme:"light", busy:false,
+  ovOpacity:.9, ovShow:{img:true, svg:true}, theme:"light", busy:false, tab:"overlay",
+  // ★ 参数层（题面上的 u/i/R/C/L 与受控源表达式）。
+  //   `params` —— 服务端给的界面视图（分组、SI 单位、按绑定的索引、自动/自定义标记）
+  //   `pvb`    —— **按绑定**索引的精确取值（"1/250"），人看/核对的那一份
+  //   `pvbf`   —— 同一份的浮点版，只为排版与工程记法（0.004 → 4 mA）
+  //   ★ 键用**绑定**而不是参数名：用户随时能改名，按名字索引的表改完名当场全失效，
+  //     界面会冒出"暂无取值"—— 可电路没变、解也没变，那是假信息。
+  //   精确值必须走 `pvb`：三法互校是精确比对的，屏上显示 1.6667 而判等用 5/3，
+  //   一旦有人拿屏上的数核对手算稿就会以为对不上。
+  params:null, pvb:null, pvbf:null, pvNote:null,
+  // 参数编辑的**待提交**状态：改名与表达式都先落在这里，按"应用"才整包提交。
+  // 不这么做的话，用户改一个字就发一次请求，中途任何一次被拒都会留下一半生效的中间态。
+  pen:{renames:{}, exprs:{}, ctrls:{}, dirty:false},
   // 视觉通道：这一遍的结论（payload.vision）、设置、以及"能不能用"的体检结果
   vision:null, vcfg:null, vprobe:null, vwarn:[], vsrc:{}, vlangs:[],
   // ★ 文字校对表的**待提交状态**。分三个桶而不是一个从服务端读回来的结果：
@@ -405,7 +516,33 @@ $("#themeBtn").onclick = () => setTheme(S.theme === "dark" ? "light" : "dark");
 async function jpost(path, body){
   const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"},
     body:JSON.stringify(body)});
-  return await r.json();
+  let j;
+  try{ j = await r.json(); }catch{ j = {}; }   // 502/504 之类可能根本不是 JSON
+  if(!j || typeof j !== "object") j = {};
+  // ★ 把状态码一起带回去。以前这里只 return 解析出来的 json，于是：
+  //   FastAPI 抛 HTTPException 时给的错误体是 {detail: "..."}，而调用方
+  //   一律读 j.error —— 读不到就退化成"IR 更新失败"这种**没有信息量**的一句话。
+  //   用户在某个格子里填错了数，屏幕上只说"更新失败"，他根本不知道错在哪。
+  j.__status = r.status;
+  j.__ok = r.ok;
+  return j;
+}
+
+/** 把服务端返回体压成**一句能给人看的原因**。
+    取值顺序是有讲究的：业务错误 ``error`` 优先（后端特意写给用户看的那句），
+    其次是 FastAPI 的 ``detail``（HTTPException 的原文），
+    最后才退到状态码 —— 至少比"请求失败"多给一个线索。 */
+function jerr(j, fallback = "请求失败"){
+  if(!j) return fallback;
+  if(typeof j.error === "string" && j.error !== "") return j.error;
+  const d = j.detail;
+  if(typeof d === "string" && d !== "") return d;
+  if(Array.isArray(d)){                       // FastAPI 422 参数校验错误体
+    const s = d.map(e => `${(e && e.loc || []).join(".")}: ${(e && e.msg) || ""}`)
+               .filter(Boolean).join("；");
+    return s || fallback;
+  }
+  return j.__status ? `HTTP ${j.__status}` : fallback;
 }
 async function doImport(file){
   const fd = new FormData();
@@ -454,25 +591,110 @@ function adopt(j){
   // 换了电路，上一次的求解结论/失败原因都作废
   S.pack = null; S.solvePayload = null; S.solveError = null;
   S.vision = j.vision || null;
+  takeParams(j);
   $("#refnode").value = j.ir.ref_node && j.ir.ref_node !== "0" ? j.ir.ref_node : $("#refnode").value;
-  renderEvidence(); renderOverlay(); renderConfirm(); renderNetlist();
-  renderIR(); renderFigure(); renderVision();
-  const n = (j.needs_human||[]).length;
-  const c = $("#cntConfirm"); c.hidden = !n; c.textContent = n;
-  syncVisionBadge();
+  // ★ 统一在**一个地方**清参数编辑的待提交态并刷新所有面板：
+  //   换会话之后还把上一个会话的改名挂在那里，点"应用"就会把 A 题的名字写到 B 题上。
+  S.pen = {renames:{}, exprs:{}, ctrls:{}, dirty:false};
+  syncBadges();
+  renderAll();
+}
+
+/** 从服务端返回体里取参数层那几个字段。
+    ★ 单独抽出来是因为有**五条**路径会带回它们（导入 / 改 IR / 回读 / 改参数 / 求解），
+    以前每处各写各的，漏一处就出现"参数页显示的是上一版取值"。 */
+function takeParams(j){
+  if(!j) return;
+  if(j.params !== undefined) S.params = j.params;
+  if(j.param_values_by_binder !== undefined) S.pvb = j.param_values_by_binder;
+  if(j.param_values_by_binder_float !== undefined) S.pvbf = j.param_values_by_binder_float;
+  // 求解包里那份（/api/solve 直接把 pack 一起给回来）
+  const p = j.pack;
+  if(p){
+    if(p.params !== undefined) S.params = p.params;
+    if(p.param_values_by_binder !== undefined) S.pvb = p.param_values_by_binder;
+    if(p.param_values_by_binder_float !== undefined) S.pvbf = p.param_values_by_binder_float;
+  }
+  // 求解失败时后端会给出"参数取值渲染失败"的具体原因 —— 别让它只留在 JSON 里
+  const f = (p && p.failures) || j.failures;
+  S.pvNote = (f && f.params) ? String(f.params) : null;
 }
 
 /* ============================================================
    标签页
    ============================================================ */
+/** 每个面板一个**纯派生**渲染函数：只读 S，不读 DOM 自己。
+    ★ 这个表必须盖住所有 data-p 面板，且开关两处一一对应 ——
+    少一个就会出现"这一页永远是旧的"。`runs/_probe_draw_static.py` 会钉住这一点。 */
+const PANEL_RENDER = {
+  overlay: () => renderOverlay(),
+  draw:    () => renderDraw(),
+  confirm: () => renderConfirm(),
+  netlist: () => renderNetlist(),
+  ir:      () => renderIR(),
+  params:  () => renderParams(),
+  solve:   () => renderSolve(),
+  figure:  () => renderFigure(),
+  vision:  () => renderVision(),
+};
+
+/** 重画面板。``only`` 给单个名字就只画那一个（切换标签时用）。 */
+function renderAll(only){
+  const names = only ? [only] : Object.keys(PANEL_RENDER);
+  const boom = [];
+  names.forEach(n => {
+    const f = PANEL_RENDER[n];
+    if(!f) return;
+    // ★ 一块画不出来不该拖垮整次刷新 —— 但**也不能装作没发生**：
+    //   把失败的面板名报出来，否则就是"某一页悄悄停在上一次的内容上"。
+    try{ f(); }catch(e){ boom.push(`${n}: ${(e && e.message) || e}`); console.error(e); }
+  });
+  if(boom.length) toast("有面板没能刷新：" + boom.join("；"), "bad");
+  return boom.length === 0;
+}
+
 function switchTab(name){
   $$("#tabs .tab").forEach(t => t.classList.toggle("active", t.dataset.p === name));
   $$(".panel").forEach(p => p.classList.toggle("show", p.dataset.p === name));
+  S.tab = name;
+  // ★ 切过去就**重画一次**。以前这里只切 class，不重画 —— 而数据很可能是在
+  //   **别的**页上被改掉的（求解改了 IR、改了参数名、回读了服务端那份…）。
+  //   于是用户切回来看到的是上一版内容，屏上的数 ≠ 后台实际保存/将要计算的数，
+  //   这正是"显示内容与实际数据不一致"最典型的来源。
+  renderAll(name);
 }
 $("#tabs").addEventListener("click", e => {
   const b = e.target.closest(".tab"); if(!b) return;
   switchTab(b.dataset.p);
 });
+// 一条页签按钮对不上一个面板 = 有页面永远点不到 / 有面板永远看不见
+$$("#tabs .tab").forEach(t => {
+  if(!PANEL_RENDER[t.dataset.p]) console.error("标签页没有对应的渲染函数:", t.dataset.p);
+});
+Object.keys(PANEL_RENDER).forEach(n => {
+  if(!$(`[data-p="${n}"]`)) console.error("渲染函数没有对应的面板:", n);
+});
+/** 回读服务端**权威**的那一份，覆盖本地状态。
+    ★ 提交被拒时**必须**这么做：屏上留着一份"没生效的改动"，接下来求解用的却是
+    后台那份 —— 用户对着屏幕上改过的数看结果，永远对不上号。
+    宁可把用户这一格打字丢掉（并且明说原因），也不能让界面与真实数据分家。 */
+async function resyncFromServer(){
+  if(!S.sid) return false;
+  try{
+    const r = await fetch(`/api/session/${encodeURIComponent(S.sid)}`);
+    const j = await r.json();
+    if(!r.ok || !j.ir) return false;
+    S.payload = j; S.ir = j.ir;
+    S.pack = null; S.solvePayload = null; S.solveError = null;
+    takeParams(j);
+    // 回读的是服务端权威那一份，本地那些"没生效的改动"必须一并丢掉 ——
+    // 留着它们，用户会以为自己的改动还在（而它早就没生效）。
+    S.pen = {renames:{}, exprs:{}, ctrls:{}, dirty:false, focus:null};
+    syncBadges();
+    renderAll();
+    return true;
+  }catch(e){ console.error(e); return false; }
+}
 
 /* ============================================================
    上传
@@ -883,11 +1105,9 @@ function adoptVisionResult(j){
   // 电路改过了，上一次的求解结论作废
   S.pack = null; S.solvePayload = null; S.solveError = null;
   S.veDirty = false;
-  renderEvidence(); renderOverlay(); renderConfirm(); renderNetlist();
-  renderIR(); renderFigure(); renderVision();
-  const n = (j.needs_human||[]).length;
-  const c = $("#cntConfirm"); c.hidden = !n; c.textContent = n;
-  syncVisionBadge();
+  takeParams(j);
+  syncBadges();
+  renderAll();
 }
 
 function syncVisionBadge(){
@@ -899,6 +1119,21 @@ function syncVisionBadge(){
   // 徽标 = "需要你动手的地方"：结构性缺失 + 有字没读出来
   const m = st + dropped;
   const cv = $("#cntVision"); cv.hidden = !m; cv.textContent = m;
+}
+
+/** 三处页签徽标一次算齐。
+    ★ 以前是三个地方各抄一段"算 needs_human 长度 → 设 cntConfirm"，
+    任何一条更新路径漏抄一段，那个徽标就永远停在旧数字上 ——
+    用户看着徽标以为没有待确认项，其实有。合并成一处，漏不掉。 */
+function syncBadges(){
+  // 结构确认：待人工确认的判断
+  const n = ((S.payload && S.payload.needs_human) || []).length;
+  const c = $("#cntConfirm"); if(c){ c.hidden = !n; c.textContent = n; }
+  // 参数：还没有名字的参数（未同步 / 孤儿）—— 这些是"表达式写不出来"的直接原因
+  const t = (S.params && S.params.items) || [];
+  const p = t.filter(x => x.orphan).length + ((S.params && S.params.orphans) || []).length;
+  const cp = $("#cntParams"); if(cp){ cp.hidden = !p; cp.textContent = p; }
+  syncVisionBadge();
 }
 
 function wireReview(){
@@ -1087,9 +1322,81 @@ function renderOverlay(){
 /* ============================================================
    结构确认 / IR 编辑
    ============================================================ */
-const KINDS = ["R","V","I","C","L"];
+// 兜底列表：只在 `/api/symbols` 还没回来时用。**真值来自后端**（见 kdef）。
+const KINDS = ["R","V","I","C","L","E","G","H","F"];
+
+/** 元件元数据。★ 中文名 / SI 单位 / 增益符号 / 是否受控 / 输出量**一律取自后端**
+    `/api/symbols`（源头是 `render.KIND_LABEL/KIND_UNIT` 与 `params.GAIN_SYMBOL`）。
+    前端不写死任何一个 —— 写死就必然出现"元件调色板叫『受控·压控压源』、
+    结构确认表里叫别的名、报告里又是第三个"这种同一个物件三个名字的错位，
+    而且这类错位用户几乎不可能自己发现。定义没到就退化成裸字母，不会画不出来。 */
+function kdef(kind){
+  const d = (S.draw && S.draw.defs && S.draw.defs[kind]) || null;
+  return d || {kind, label: kind, unit: "", controlled: false, control_mode: "",
+               gain_symbol: "", output: "", detail: "", independent: false,
+               dc_solvable: true};
+}
+const isControlledKind = k => !!kdef(k).controlled;
+/** 类型下拉项。文案带中文名，值仍是裸字母（送进 IR 的就是字母）。 */
+function kindOptions(sel){
+  const defs = (S.draw && S.draw.defs) || {};
+  const keys = Object.keys(defs).length ? Object.keys(defs) : KINDS;
+  return keys.map(k => {
+    const d = kdef(k);
+    const txt = d.label && d.label !== k ? `${k} · ${d.label}` : k;
+    return `<option value="${esc(k)}"${k === sel ? " selected" : ""}>${esc(txt)}</option>`;
+  }).join("");
+}
 function irWarnings(){
   return (S.payload && S.payload.warnings) || [];
+}
+/** 解析时**没能建起来**的元件。
+    ★ 这一块必须显眼，而且必须**说清后果**：它们不在网表里，于是下面算出来的
+    是"比原图少几条支路"的电路的答案。而三法互校、功率守恒**都拦不住**这类错
+    （三条路径共用同一份残缺的 IR）。所以这里不是一句提示，是要拦住人的一张卡。 */
+function skippedCard(){
+  const sk = (S.payload && S.payload.skipped_components) || [];
+  if(!sk.length) return "";
+  const WHY = {
+    short_circuit: "两端被判成了同一个结点（短路嫌疑）—— 多半是符号本体被当成了导线",
+    endpoint_off_geometry: "端点落不到任何结点上 —— 那一端没接到导线或别的端子上",
+    control_undefined: "受控源的控制关系没读出来 —— 受控源与独立源的方程完全不同，控制支路不敢猜",
+    no_slot: "图上找不到它的符号槽位（画法不认识，或者被别的东西压住了）",
+  };
+  return `<div class="card"><header>${IC.warn}有 ${sk.length} 个元件没能建立起来（不在网表里）</header>
+    <div class="body">
+      <div class="errbox">${IC.warn}<div class="wrap">这几条支路**没有被偷偷换掉或补上，就是缺了**。
+        因此现在算出来的是**比原图少几条支路**的电路的结果 —— 而这正是三法互校与功率守恒
+        都拦不住的一类错：三条求解路径共用的是同一份残缺的电路。
+        <b>请先把下面这几个补齐（或用画布重画），再采信任何数值。</b></div></div>
+      <div class="tsc" style="margin-top:10px"><table>
+        <thead><tr><th>位号</th><th>原因</th><th>细节</th></tr></thead>
+        <tbody>${sk.map(s => `<tr><td class="mono">${esc(s.ref)}</td>
+          <td class="hint">${esc(WHY[s.why] || s.why)}</td>
+          <td class="hint mono">${esc(s.detail)}</td></tr>`).join("")}</tbody>
+      </table></div>
+    </div></div>`;
+}
+/** 受控源那两行的说明文字：它到底"受谁控制、增益怎么读"。
+    这一段必须**显式**写出来。受控源最典型的读图错误就是把它当独立源，
+    而两者的电路方程完全不同 —— 一眼看不出区别就等于没读出来。 */
+function ctrlSpec(c){
+  const ct = c.ctrl || {};
+  const d = kdef(c.kind);
+  const gm = d.control_mode === "V" ? "电压" : "电流";
+  const where = (ct.mode === "V")
+    ? `控制电压取自节点 <b class="mono">${esc((ct.nodes||[])[0])}</b> → <b class="mono">${esc((ct.nodes||[])[1])}</b> 之间的电位差`
+    : `控制电流取自支路 <b class="mono">${esc(ct.ref||"?")}</b>`
+      + (ct.sense_ref ? `（为取电流自动串入 0V 探针 <b class="mono">${esc(ct.sense_ref)}</b>，不改变电路行为）` : "");
+  const expr = (ct.expr||"").trim();
+  return `<span class="chip flat">受控</span>
+    <span>输出 <b class="mono">${esc(d.output||"?")}</b> · 受 ${gm} 控制 · 增益
+      <b>${esc(d.gain_symbol||"k")}</b>${d.unit?` <span class="mut">(${esc(d.unit)})</span>`:""}</span>
+    <span class="hint" style="display:block;margin-top:3px">${where}</span>
+    <span class="hint" style="display:block;margin-top:3px">${esc(d.detail||"")}</span>
+    <span class="hint" style="display:block;margin-top:3px">${expr
+      ? `自定义控制表达式：<b class="mono">${esc(expr)}</b> —— 在「参数」页改`
+      : `用的是标准形 <b class="mono">输出 = 增益 × 控制量</b>；要写成别的线性组合（如 <b class="mono">2*u_1 - 3*i_R2</b>）去「参数」页`}</span>`;
 }
 function renderConfirm(){
   const host = $('[data-p="confirm"]');
@@ -1097,18 +1404,28 @@ function renderConfirm(){
   const comps = S.ir.components || [];
   const unmet = (S.payload && S.payload.needs_human) || [];
   const gate = (S.payload && S.payload.confidence_gate) ?? .85;
-  const rows = comps.map((c,i) => {
+  // ★ 行的身份是**位号**，不是数组下标。
+  //   以前用 `data-i="${i}"`，于是"屏幕上第 3 行"和"数组里第 3 个"被当成一回事 ——
+  //   可这次编辑提交出去之后服务端会回一份新的 ir，数组顺序/长度一变，
+  //   同一个 data-i 就指向**另一个元件**了。用户改 R3、实际改到 C1 上，
+  //   界面上完全看不出来（这正是"参数指向错误"）。
+  //   位号是 IR 里的唯一标识，用它做键就不存在漂移。
+  const rows = comps.map((c) => {
     const ev = c.evidence || {};
     const need = unmet.some(u => u.ref === c.ref);
     const status = need
       ? `<span class="chip warn">${IC.warn}待确认</span>`
       : `<span class="chip ok">${IC.ok}可采信</span>`;
-    return `<tr data-i="${i}">
+    const d = kdef(c.kind);
+    const ctl = isControlledKind(c.kind);
+    // 受控源的"数值"是增益，不是它输出的电压/电流 —— 列头会因此写清楚
+    const valHint = ctl ? `<span class="hint mono">${esc(d.gain_symbol||"k")}</span>` : "";
+    return `<tr data-ref="${esc(c.ref)}">
       <td><input class="nm mono" data-k="ref" value="${esc(c.ref)}"></td>
-      <td><select data-k="kind">${KINDS.map(k=>`<option ${k===c.kind?"selected":""}>${k}</option>`).join("")}</select></td>
+      <td><select data-k="kind">${kindOptions(c.kind)}</select></td>
       <td><input class="nd mono" data-k="n0" value="${esc(c.nodes[0])}"></td>
       <td><input class="nd mono" data-k="n1" value="${esc(c.nodes[1])}"></td>
-      <td><input class="vl mono" data-k="value" value="${c.value==null?"":esc(num(c.value))}" placeholder="缺"></td>
+      <td><div class="valcell"><input class="vl mono" data-k="value" value="${c.value==null?"":esc(num(c.value))}" placeholder="缺">${valHint}</div></td>
       <td><span class="chip flat mono">${esc(ev.source||"?")}</span></td>
       <td class="num mono">${ev.confidence!=null?esc(ev.confidence.toFixed(2)):"-"}</td>
       <td>${status}</td>
@@ -1116,16 +1433,19 @@ function renderConfirm(){
         ${need?`<button class="btn sm" data-act="ok" data-nolock>${IC.ok}确认</button> `:""}
         <button class="btn sm danger" data-act="del" data-nolock>${IC.trash}</button>
       </td>
-    </tr>`;
+    </tr>${ctl ? `<tr class="ctlrow" data-ref="${esc(c.ref)}">
+      <td colspan="9">${ctrlSpec(c)}</td></tr>` : ""}`;
   }).join("");
   const warn = irWarnings();
+  const nCtl = comps.filter(c => isControlledKind(c.kind)).length;
   host.innerHTML = `
   <div class="card"><header><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 11l2.5 2.5L16 8"/><rect x="3.5" y="4.5" width="17" height="15" rx="2"/></svg>
       结构确认<span class="spacer"></span>
+      ${nCtl?`<span class="chip flat">含 ${nCtl} 个受控源</span>`:""}
       <span class="hint">置信度低于 <b class="mono">${esc(gate)}</b> 或出处非精确的判断必须人工拍板，未确认也会照样拿去算 —— 但报告会如实标注</span></header>
     <div class="body" style="padding:0 0 1px">
       <div class="tsc"><table>
-        <thead><tr><th>位号</th><th>类型</th><th>节点 a</th><th>节点 b</th><th>数值</th><th>出处</th><th class="num">置信度</th><th>状态</th><th class="num">操作</th></tr></thead>
+        <thead><tr><th>位号</th><th>类型</th><th>节点 a</th><th>节点 b</th><th>数值 / 增益</th><th>出处</th><th class="num">置信度</th><th>状态</th><th class="num">操作</th></tr></thead>
         <tbody>${rows || `<tr><td colspan="9"><div class="hint">没有元件</div></td></tr>`}</tbody>
       </table></div>
     </div>
@@ -1134,6 +1454,7 @@ function renderConfirm(){
         <button class="btn primary" id="solveBtn">${IC.play}应用并求解（三法）</button>
         <button class="btn" id="addBtn">${IC.plus}新增元件</button>
         <button class="btn" id="toDrawFromIr">${IC.edit}在画布上编辑</button>
+        <button class="btn" id="toParamsFromIr">${IC.sliders}命名与表达式</button>
         <span class="spacer" style="flex:1"></span>
         <label class="hint" style="display:flex;align-items:center;gap:6px">参考节点
           <input id="refNodeInput" class="mono" style="width:76px" value="${esc(S.ir.ref_node||"0")}"></label>
@@ -1142,9 +1463,11 @@ function renderConfirm(){
       </div>
       <div class="hint" style="margin-top:9px">
         「确认」会把出处改写为 manual、置信度置 1 —— 这是**你的判断**，不是机器的。改动类型或数值不改变出处。
+        改完这里，各页会自动重画；但**参数名与受控源表达式**在「参数」页改。
       </div>
     </div>
   </div>
+  ${skippedCard()}
   ${warn.length?`<div class="card"><header>${IC.warn}结构校验提示</header><div class="body">
       <ul class="plain">${warn.map(w=>`<li>${esc(w)}</li>`).join("")}</ul></div></div>`:""}
   ${unmet.length?`<div class="card"><header>${IC.warn}待人工确认的判断（${unmet.length} 条）</header><div class="body">
@@ -1168,6 +1491,8 @@ function renderConfirm(){
     if(!S.sid){ toast("还没有会话 —— 先导入一张图或打开手绘面板", "bad"); return; }
     loadToDraw(S.sid);
   };
+  const tp = $("#toParamsFromIr");
+  if(tp) tp.onclick = () => switchTab("params");
   $("#addBtn").onclick = () => {
     const n = (S.ir.components||[]).length + 1;
     S.ir.components.push({ref:`R${n}`, kind:"R", nodes:["1","0"], value:null,
@@ -1176,12 +1501,43 @@ function renderConfirm(){
   };
   $("#refNodeInput").onchange = e => { S.ir.ref_node = e.target.value.trim() || "0"; syncIr(); };
 }
+/** 由位号找元件。★ 找不到就**明说**，不退回"按下标猜一个" ——
+    界面与数据已经错位的情况下，猜出来的那个几乎一定是错的元件。 */
+function compByRef(ref){
+  const list = (S.ir && S.ir.components) || [];
+  const hit = list.filter(c => c.ref === ref);
+  if(hit.length === 1) return hit[0];
+  if(hit.length > 1){ toast(`位号 ${ref} 重复了（${hit.length} 个）—— 请先改成唯一的位号`, "bad"); return null; }
+  return null;
+}
 function onEdit(e){
   const t = e.target, k = t.dataset.k; if(!k) return;
-  const i = Number(t.closest("tr").dataset.i);
-  const c = S.ir.components[i]; if(!c) return;
-  if(k === "ref") c.ref = t.value.trim();
-  else if(k === "kind") c.kind = t.value;
+  const tr = t.closest("tr");
+  const old = tr && tr.dataset.ref;
+  const c = compByRef(old);
+  if(!c){ resyncFromServer(); return; }
+  if(k === "ref"){
+    const nv = t.value.trim();
+    if(nv === ""){ toast("位号不能为空", "bad"); t.value = old; return; }
+    if((S.ir.components||[]).some(x => x !== c && x.ref === nv)){
+      toast(`位号 ${nv} 已经有一个元件在用了`, "bad"); t.value = old; return;
+    }
+    c.ref = nv;
+  }
+  else if(k === "kind"){
+    c.kind = t.value;
+    // ★ 独立源 ↔ 受控源之间换类型时，`ctrl` 这个字段的存在性必须跟着变：
+    //   从 V 改成 E 而 ctrl 仍为空，IR 里就是"一个没有控制支路的受控源"，
+    //   校验会拦下，但用户看到的只是"求解失败"。这里当场补上默认值，
+    //   让他至少拿到一个能改的起点（控制关系在「参数」页填）。
+    if(isControlledKind(c.kind) && !c.ctrl){
+      const ctl = kdef(c.kind).control_mode === "I"
+        ? {mode:"I", ref:"", nodes:null, expr:"", sense_ref:""}
+        : {mode:"V", nodes:["0","0"], ref:"", expr:"", sense_ref:""};
+      c.ctrl = ctl;
+      toast(`${c.ref} 改成受控源了：控制支路还没定，去「参数」页填`, "bad");
+    }
+  }
   else if(k === "n0") c.nodes[0] = t.value.trim();
   else if(k === "n1") c.nodes[1] = t.value.trim();
   else if(k === "value"){
@@ -1193,27 +1549,463 @@ function onEdit(e){
 }
 function onRowAct(e){
   const b = e.target.closest("button[data-act]"); if(!b) return;
-  const i = Number(b.closest("tr").dataset.i);
-  const c = S.ir.components[i]; if(!c) return;
-  if(b.dataset.act === "del"){ S.ir.components.splice(i,1); syncIr(); return; }
+  const tr = b.closest("tr");
+  const ref = tr && tr.dataset.ref;
+  const c = compByRef(ref);
+  if(!c){ resyncFromServer(); return; }
+  if(b.dataset.act === "del"){
+    // ★ 删之前先问一句：受控源的控制端可能就是它，删掉等于把另一个元件的方程打断。
+    const dependent = (S.ir.components||[]).filter(
+      x => x.ctrl && (x.ctrl.ref === ref || x.ctrl.sense_ref === ref));
+    if(dependent.length && !confirm(
+        `有 ${dependent.length} 个受控源正拿 ${ref} 当控制支路（`
+        + dependent.map(x => x.ref).join("、") + `）。删掉它之后那些控制关系会失效。仍要删除？`)){
+      return;
+    }
+    S.ir.components.splice(S.ir.components.indexOf(c), 1);
+    syncIr();
+    return;
+  }
   if(b.dataset.act === "ok"){
     c.evidence = {source:"manual", confidence:1.0,
                   detail:"人工确认（原出处：" + ((c.evidence&&c.evidence.source)||"?") + "）"};
     syncIr();
   }
 }
+/* ============================================================
+   参数（命名 + 受控源表达式）
+   ------------------------------------------------------------
+   ★ 这一页存在的理由：电路的**方程**是用"哪条支路的电流、哪个结点的电压"
+   写出来的，而人在纸上讨论时用的是名字（`i_R1`、`u_3`）。中间缺了这层映射，
+   受控源的表达式就只能写成一串节点号 —— 既对不上题目，也无法核对。
+   所以这一页把三件事摆在同一个屏上：
+     ① 每个量叫什么（可改）、绑在哪儿、现在的取值是多少、单位是什么；
+     ② 受控源受谁控制、增益叫什么、表达式怎么写；
+     ③ 表达式要用的名字，点一下就插进去 —— 不让人去背名字。
+   ============================================================ */
+const SI_STEPS = [[1e9,"G"],[1e6,"M"],[1e3,"k"],[1,""],[1e-3,"m"],
+                  [1e-6,"µ"],[1e-9,"n"],[1e-12,"p"]];
+/** 人类读法：0.004 A → `4 mA`。**纯显示**，不参与任何判断。
+    ★ 精确值不丢：调用处会把它放进 `title`，悬停就能看到 ——
+    小数只是它的易读写法，不是替代品（1/3 这种量取几位都不精确）。 */
+function fmtSI(v, unit){
+  const u = unit ? " " + unit : "";
+  if(v == null || typeof v !== "number" || !Number.isFinite(v)) return "—";
+  if(v === 0) return "0" + u;
+  const neg = v < 0, a = Math.abs(v);
+  let st = SI_STEPS[SI_STEPS.length - 1];
+  for(const c of SI_STEPS){ if(a >= c[0]){ st = c; break; } }
+  const n = a / st[0];
+  const r = Math.round(n);
+  let s = (Math.abs(n - r) < 1e-9) ? String(r)
+        : (Math.abs(n) < 1e4 ? String(Math.round(n * 1e6) / 1e6) : n.toPrecision(6));
+  if(s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
+  return (neg ? "-" : "") + s + (st[1] ? " " + st[1] : " ") + unit;
+}
+/** 取某个参数的取值。★ 用**绑定**去查，不用名字 ——
+    改完名之后按名字查会全部落空，界面会显示"暂无取值"，
+    可电路没变、解也没变，那是假信息（见后端 Session.pv_binder 的注释）。 */
+function pvOf(item, asFloat){
+  const src = asFloat ? S.pvbf : S.pvb;
+  if(!src) return undefined;
+  const key = `${item.binder_kind}:${(item.binder || [])[1]}`;
+  return src[key];
+}
+function pendingName(it){
+  const r = (S.pen.renames || {})[it.symbol];
+  return r != null ? r : it.symbol;
+}
+/** 「应用」按钮上的文字。三样改动都要数出来 ——
+    只显示"改名 N 个"会让用户以为控制关系的改动没被记下，于是再改一遍。 */
+function penBtnText(nRen, nExp, nCtl){
+  const parts = [];
+  if(nRen) parts.push(`${nRen} 个改名`);
+  if(nExp) parts.push(`${nExp} 个表达式`);
+  if(nCtl) parts.push(`${nCtl} 个控制关系`);
+  return parts.length ? `应用（${parts.join(" / ")}）` : "应用（还没有改动）";
+}
+function renderParams(){
+  const host = $('[data-p="params"]');
+  if(!S.ir || !S.params){ host.innerHTML = emptyCard("先导入一张图"); return; }
+  const pv = S.params;
+  const items = pv.items || [];
+  const ctl = pv.controlled || [];
+  const pen = S.pen;
+  const solved = !!(S.pvb && Object.keys(S.pvb).length);
+  const nRen = Object.keys(pen.renames || {}).length;
+  const nExp = Object.keys(pen.exprs || {}).length;
+  // 只数**真的改了**的控制关系（跟 applyParams 里同一套判据）
+  const nCtl = Object.entries(pen.ctrls || {}).filter(([ref, v]) => {
+    const c = currentCtl(ref);
+    return (v.nodes && String(v.nodes.join("|")) !== String((c.control_nodes||[]).join("|")))
+        || (v.ref != null && v.ref !== (c.ref || ""));
+  }).length;
+  const penTotal = nRen + nExp + nCtl;
+
+  // ---------- ① 参数表（按量分组，组头带 SI 单位）
+  const body = (pv.groups || []).map(g => {
+    const rows = items.filter(e => e.quantity === g.quantity).map(e => {
+      const changed = (pen.renames || {})[e.symbol] != null;
+      const vEx = pvOf(e, false), vF = pvOf(e, true);
+      // 取值这一列：浮点那份用来排版（所以能认出 4 mA），
+      // 精确那份进 title —— 分数与浮点**两栏都给**，前端不解析分数。
+      const shown = (vF === undefined || vF === null)
+        ? (solved ? "—" : "待求解") : fmtSI(typeof vF === "number" ? vF : Number(vF), e.unit);
+      const tip = (vEx === undefined || vEx === null)
+        ? "还没有取值"
+        : `精确值 ${vEx}${e.unit ? " " + e.unit : ""}`;
+      return `<tr data-sym="${esc(e.symbol)}"${e.orphan ? ' class="dim"' : ""}>
+        <td><input class="sy mono" data-pk="sym" value="${esc(pendingName(e))}"
+              title="参数名。留空或重名都会被拒绝 —— 名字必须唯一，否则表达式指不到东西"></td>
+        <td class="hint">${esc(e.binder_label)} <span class="mono mut">${esc(e.binder_text)}</span></td>
+        <td class="num mono" title="${esc(tip)}">${esc(shown)}</td>
+        <td class="mono mut">${esc(e.unit || "—")}</td>
+        <td>${e.auto ? `<span class="chip flat">自动</span>` : `<span class="chip ok">自定义</span>`}${
+              changed ? ` <span class="chip warn">待改</span>` : ""}${
+              e.orphan ? ` <span class="chip bad">孤儿</span>` : ""}</td>
+      </tr>`;
+    }).join("");
+    return `<tr class="grp"><td colspan="5">
+        <b>${esc(g.label)}</b> <span class="mono mut">${esc(g.unit || "")}</span>
+        <span class="hint">　共 ${g.symbols.length} 个：<span class="mono">${esc(g.symbols.join("、"))}</span></span>
+      </td></tr>${rows}`;
+  }).join("");
+
+  // ---------- ② 受控源
+  // 控制关系必须**在这一页能改**。理由：用户可能是在「结构确认」页把某个元件
+  // 的类型改成 E 的（或者手绘画布上刚画了一个受控源）—— 那时它的控制支路是空的。
+  // 如果这一页只能改表达式和增益，用户就永远填不上控制支路，
+  // 求解只会反复说"控制端没定"，而他找遍界面也没有地方能定。
+  const nodeList = (S.ir.nodes || []);
+  const compList = (S.ir.components || []);
+  const ctlCards = ctl.map(c => {
+    const d = kdef(c.kind);
+    const stdGain = c.value == null ? "?" : num(c.value);
+    const pend = ((pen.ctrls || {})[c.ref]) || {};
+    const mode = c.mode || "V";
+    const curNodes = pend.nodes || c.control_nodes || ["", ""];
+    // ★ 被采样支路的当前值必须取 c.sampled_ref，**不能**取 c.ref ——
+    //   c.ref 是受控源自己的位号，而下面的选项里刻意排除了自己，
+    //   于是会永远选不上、界面显示"（未定）"，看起来像用户从没填过。
+    const curRef = pend.ref != null ? pend.ref : (c.sampled_ref || "");
+    const dirty = !!pend.dirty;
+    // ★ 控制量一律按**被采样支路**（题目里那条）显示，不显示探针位号：
+    //   探针是求解器为了取电流自己串进去的，用户翻遍题目也没有那个元件。
+    //   它出现在下面「0V 采样探针」那一格，并且标明"不是题目元件"。
+    const cq = mode === "V"
+      ? `V(${esc(curNodes[0] || "?")}) − V(${esc(curNodes[1] || "?")})`
+      : `i(${esc(curRef || "?")})`;
+    const cur = ((pen.exprs || {})[c.ref] != null) ? pen.exprs[c.ref] : (c.expr || "");
+    const stand = `${esc(c.gain_symbol || "k")}·(${cq})`;
+    // 控制端选择器：电压控制选**两个结点**，电流控制选**一条支路**。
+    // ★ 选项一律来自电路本身（结点表 / 元件表），不给人手打名字的机会 ——
+    //   手打必然出现"名字打错一个字符"这类错，而它看起来完全正常。
+    const sel = (attrs, opts, cur) =>
+      `<select ${attrs}>${opts.map(([v, t]) =>
+        `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
+    const nodeOpts = [["", "（未定）"]].concat(nodeList.map(n => [n, n]));
+    const compOpts = [["", "（未定）"]].concat(
+      compList.filter(x => x.ref !== c.ref).map(x => [x.ref, `${x.ref}（${kdef(x.kind).label}）`]));
+    const picker = mode === "V"
+      ? `<label class="f">控制端结点（控制量 = 前一个的电位 − 后一个的电位）</label>
+         <div class="row" style="gap:6px">
+           ${sel(`data-ck="n0" data-cref="${esc(c.ref)}"`, nodeOpts, curNodes[0] || "")}
+           <span class="mut hint">−</span>
+           ${sel(`data-ck="n1" data-cref="${esc(c.ref)}"`, nodeOpts, curNodes[1] || "")}
+         </div>`
+      : `<label class="f">被采样的支路（取这条支路上的电流作控制量）</label>
+         ${sel(`data-ck="ref" data-cref="${esc(c.ref)}"`, compOpts, curRef || "")}`;
+    return `<div class="ctlcard" data-cref="${esc(c.ref)}">
+      <div class="ctltop">
+        <span class="chip flat mono">${esc(c.ref)}</span>
+        <b>${esc(d.label || c.kind)}</b>
+        <span class="hint">输出 <span class="mono">${esc(d.output||"?")}</span> ·
+          增益 <b>${esc(c.gain_symbol||"k")}</b>
+          <span class="mut">(${esc(c.unit||"")})</span> ·
+          ${mode === "V" ? "电压控制" : "电流控制"}</span>
+        ${dirty ? `<span class="chip warn">控制关系待改</span>` : ""}
+      </div>
+      <div class="hint" style="margin:4px 0 0">${esc(c.gain_note||d.detail||"")}</div>
+      ${picker}
+      <div class="ctlgrid">
+        <span class="hint">当前控制量</span><span class="mono">${cq}</span>
+        <span class="hint">标准形</span><span class="mono">输出 = ${stdGain}·(${cq})</span>
+        <span class="hint">增益参数名</span><span class="mono">${esc(c.value_param||"—")}</span>
+        <span class="hint">网表器件名</span><span class="mono">${esc(c.net_name||c.ref)}${
+          c.expr ? ` <span class="mut">（用了自定义表达式，只能落成行为源 B${esc(c.ref)}）</span>` : ""}</span>
+        ${mode === "I" ? `<span class="hint">实际取电流的支路</span>
+          <span class="mono">${esc(c.sampling_ref || "—")}${
+            c.sampling_is_probe
+              ? ` <span class="mut">（这是<b>自动插入</b>的 0V 探针，<b>不是题目元件</b>；它会让节点数与支路数各多一个。控制量那一行写的仍是题目里的 ${esc(c.sampled_ref)}）</span>`
+              : (c.probe_ref ? ` <span class="mut">（被采样支路本身就是电压源，直接取它的电流，不需要探针）</span>`
+                             : ` <span class="mut">（未定）</span>`)}</span>` : ""}
+      </div>
+      <label class="f" style="margin:9px 0 4px">控制表达式（用下面参数表里的名字书写，可留空 = 用标准形）</label>
+      <textarea class="expr mono" data-cref="${esc(c.ref)}" rows="2"
+        placeholder="例如 ${esc((pv.items||[]).slice(0,3).map(x=>x.symbol).join(" + "))} —— 留空则用标准形 ${stdGain}·(${cq})"
+        >${esc(cur)}</textarea>
+      <div class="hint exprhint" data-chint="${esc(c.ref)}">${
+        cur ? "未提交，点上面的「应用」才生效" : "当前用标准形（增益 × 控制量）"}</div>
+    </div>`;
+  }).join("") || `<div class="hint">这张电路里没有受控源。
+      如果题目里其实有（压控压源 / 流控流源 …），去「结构确认」页把那个元件的**类型**改成 E / G / H / F，
+      控制关系会出现在这一页。</div>`;
+
+  // ---------- ③ 可插入的参数名
+  const chips = (pv.groups || []).map(g => `<span class="grpname">${esc(g.label)}</span>`
+    + items.filter(e => e.quantity === g.quantity)
+        .map(e => `<button class="btn sm mono pchip" data-ins="${esc(pendingName(e))}"
+              title="${esc(e.binder_label)} ${esc(e.binder_text)}${e.unit ? " · " + esc(e.unit) : ""}"
+              >${esc(pendingName(e))}</button>`).join("")).join("");
+
+  host.innerHTML = `
+  <div class="card"><header>${IC.tag}参数表<span class="spacer"></span>
+      <span class="chip flat">共 ${items.length} 个</span>
+      <span class="chip flat">自动命名 ${pv.auto_count} · 自定义 ${pv.custom_count}</span>
+      ${solved ? "" : `<span class="chip warn">尚未求解，取值栏为空</span>`}</header>
+    <div class="body" style="padding:0 0 1px"><div class="tsc"><table>
+      <thead><tr><th>参数名</th><th>绑定到</th><th class="num">取值</th><th>单位</th><th>命名来源</th></tr></thead>
+      <tbody>${body || `<tr><td colspan="5"><div class="hint">还没有参数</div></td></tr>`}</tbody>
+    </table></div></div>
+    <div class="body">
+      <div class="row wrap-r">
+        <button class="btn primary" id="pApply"${penTotal ? "" : " disabled"}>${IC.ok}${penBtnText(nRen, nExp, nCtl)}</button>
+        <button class="btn" id="pReset"${penTotal ? "" : " disabled"}>${IC.refresh}放弃改动</button>
+        <span class="spacer" style="flex:1"></span>
+        <button class="btn" id="pSolve">${IC.play}按当前电路求解</button>
+      </div>
+      <div class="hint" style="margin-top:9px">
+        <b>单位一律 SI</b>：${esc((pv.units||{}).header || "V / A / Ω / F / H / S")}。
+        取值栏用工程记法只为好读（<span class="mono">4 mA</span>），**精确值悬停可见**（<span class="mono">1/250 A</span>）。
+        ${solved ? "" : `<br>取值来自上一次求解；电路或表达式一改，取值就作废（会回到"—"），这是有意的 ——
+          拿旧解的数去配新方程，看起来和正确答案一模一样。`}
+      </div>
+      ${S.pvNote ? `<div class="errbox" style="margin-top:9px">${IC.warn}<div>参数取值渲染失败：${esc(S.pvNote)}</div></div>` : ""}
+    </div>
+  </div>
+
+  <div class="card"><header>${IC.link}受控源的控制关系（${ctl.length} 个）</header>
+    <div class="body">${ctlCards}</div>
+  </div>
+
+  <div class="card"><header>${IC.fx}表达式里可以用的名字<span class="spacer"></span>
+      <span class="hint">点一下插进上面最后点过的那个表达式框</span></header>
+    <div class="body">
+      ${(nRen || nExp) ? `<div class="warnbox" style="margin-bottom:10px">${IC.warn}<div>
+        有未应用的改动。下面的名字已按**待应用的新名字**显示 —— 表达式要照着这个写，
+        否则应用之后会指不到东西。</div></div>` : ""}
+      <div class="pchips">${chips || `<span class="hint">还没有参数</span>`}</div>
+      <div class="hint" style="margin-top:10px">
+        只支持**线性**表达式：加减、乘常数、除以非零常数。像 <span class="mono">u_1*u_2</span>、
+        <span class="mono">1/u_1</span> 这种非线性写法会被明确拒绝，而不是悄悄算出一个错数
+        —— 线性是"三法互校能严格逐项比对"的前提。
+      </div>
+    </div>
+  </div>
+  ${(pv.orphans||[]).length ? `<div class="card"><header>${IC.warn}孤儿参数（${pv.orphans.length} 个）</header>
+    <div class="body"><div class="hint">这些名字还留在参数表里，但对应的元件/结点已经不在电路上了
+      （多半是改名或删元件留下的）。它们**不影响求解**，但会让"可用名字"变浑浊 —— 清掉更干净。</div>
+      <div class="pchips" style="margin-top:9px">${pv.orphans.map(s=>`<span class="chip bad mono">${esc(s)}</span>`).join("")}</div>
+    </div></div>` : ""}
+  `;
+
+  // ---- 接线。★ 用 onXxx = 赋值而不是 addEventListener：
+  //   这一页每次数据一变就整块重画，addEventListener 会一次次叠加，
+  //   表现是"点一下发出 N 次请求"（N = 这页被重画过几次）。
+  const tb = $('[data-p="params"] tbody');
+  tb.addEventListener("change", onParamEdit);
+  tb.addEventListener("keydown", e => {
+    if(e.key === "Enter"){
+      const i = e.target.closest("input");
+      if(i){ e.preventDefault(); i.blur(); }   // 输入框里回车 = 提交这个名字
+    }
+  });
+  $$('[data-p="params"] .expr').forEach(t => {
+    t.onfocus = () => { S.pen.focus = t.dataset.cref; };
+    t.oninput = () => onExprInput(t);
+  });
+  $$('[data-p="params"] [data-ck]').forEach(s => { s.onchange = onCtrlPick; });
+  $$('[data-p="params"] .pchip').forEach(b => {
+    b.onclick = () => insertParamName(b.dataset.ins);
+  });
+  $("#pApply").onclick = applyParams;
+  $("#pReset").onclick = () => {
+    S.pen = {renames:{}, exprs:{}, ctrls:{}, dirty:false, focus:S.pen.focus};
+    renderParams();
+    toast("已放弃未应用的改动（电路本来就没变）");
+  };
+  $("#pSolve").onclick = () => { switchTab("confirm"); doSolve(); };
+}
+
+/** 改某个受控源的控制关系（选控制端结点 / 被采样支路）。
+    ★ 同样是**先记待提交**：控制关系一变，这个受控源的方程就变了，
+    而表达式可能正引着某个电流 —— 必须让服务端整包校验一次。 */
+function onCtrlPick(e){
+  const s = e.target, k = s.dataset.ck, ref = s.dataset.cref;
+  if(!k || !ref) return;
+  const card = s.closest(".ctlcard");
+  const prev = S.pen.ctrls[ref] || {};
+  const next = {...prev, dirty:true};
+  if(k === "n0" || k === "n1"){
+    const cur = next.nodes || (currentCtl(ref).control_nodes || ["", ""]);
+    const pair = [cur[0] || "", cur[1] || ""];
+    pair[k === "n0" ? 0 : 1] = s.value;
+    next.nodes = pair;
+    if(pair[0] && pair[0] === pair[1]){
+      toast("控制端的两点是同一个结点 —— 控制量恒为 0，等于一个值为 0 的独立源", "bad");
+    }
+  } else if(k === "ref"){
+    next.ref = s.value;
+  }
+  S.pen.ctrls[ref] = next;
+  S.pen.dirty = true;
+  renderParams();          // 控制量、标准形文字都跟着变，必须重画
+}
+/** 从服务端那份里取某个受控源的记录（待改状态不算）。 */
+function currentCtl(ref){
+  return ((S.params && S.params.controlled) || []).find(c => c.ref === ref) || {};
+}
+
+/** 改参数名。先只记进待提交状态，等"应用"一起提交 ——
+    ★ 每敲一个字就发一次请求是不行的：中途任何一次被拒都会留下"一半新一半旧"的
+    参数表，而它长得和正常的一模一样。改名还会连带改写表达式，
+    所以必须让服务端**整包**校验、整包生效。 */
+function onParamEdit(e){
+  const t = e.target, k = t.dataset.pk;
+  if(k !== "sym") return;
+  const old = t.closest("tr").dataset.sym;
+  const nv = t.value.trim();
+  if(nv === old || nv === ""){                 // 还原
+    delete S.pen.renames[old];
+    t.value = old;
+    renderParams();
+    return;
+  }
+  // 本地先做两道**廉价的**检查，只是为了当场给反馈；
+  // 真正的判定（保留字、与自动命名撞车、首字符规则…）在服务端，这里不抢它的活。
+  if(!/^[A-Za-z_\u03b1-\u03c9][A-Za-z0-9_\u03b1-\u03c9]*$/.test(nv)){
+    toast("参数名只能用字母/数字/下划线，且不能以数字开头", "bad");
+    t.value = pendingName({symbol: old});
+    return;
+  }
+  const clash = (S.params.items||[]).some(
+    x => x.symbol !== old && (S.pen.renames[x.symbol] ?? x.symbol) === nv);
+  if(clash){ toast(`参数名 ${nv} 已经被占用了`, "bad"); t.value = pendingName({symbol: old}); return; }
+  S.pen.renames[old] = nv;
+  S.pen.dirty = true;
+  renderParams();
+}
+/** 表达式输入。只做**提示**不做拦截 —— 最终的判定在服务端，
+    前端拦得越狠，"为什么我不能这么写"就越说不清。 */
+function onExprInput(t){
+  const ref = t.dataset.cref;
+  const v = t.value.trim();
+  if(v === "") delete S.pen.exprs[ref];
+  else S.pen.exprs[ref] = v;
+  S.pen.dirty = true;
+  S.pen.focus = ref;
+  const hint = $(`[data-chint="${CSS.escape(ref)}"]`);
+  if(hint){
+    const bad = [];
+    if(/[^A-Za-z0-9_\s+\-*/().\u00b7\u03b1-\u03c9]/.test(v)) bad.push("含有不认得的字符");
+    if(/\*/.test(v) && /[A-Za-z_][A-Za-z0-9_]*\s*\*/.test(v.replace(/\d+\s*\*/g, "")))
+      bad.push("两个参数相乘不是线性表达式");
+    hint.innerHTML = bad.length
+      ? `<span class="chip warn">${IC.warn}${esc(bad.join("；"))}</span>（最终以服务端判定为准）`
+      : `未提交，点上面的「应用」才生效`;
+  }
+  // 只更新按钮文字，不整块重画 —— 重画会抢走焦点、光标跳回行首
+  const b = $("#pApply");
+  if(b){
+    const n = Object.keys(S.pen.renames||{}).length, m = Object.keys(S.pen.exprs||{}).length;
+    const k = Object.entries(S.pen.ctrls||{}).filter(([ref, v]) => {
+      const c = currentCtl(ref);
+      return (v.nodes && String(v.nodes.join("|")) !== String((c.control_nodes||[]).join("|")))
+          || (v.ref != null && v.ref !== (c.ref || ""));
+    }).length;
+    b.disabled = !(n + m + k);
+    b.innerHTML = `${IC.ok}${penBtnText(n, m, k)}`;
+  }
+}
+/** 把某个参数名插进最后点过的表达式框（在光标处插，不是尾巴） */
+function insertParamName(name){
+  const ref = S.pen.focus;
+  const t = ref ? $(`[data-p="params"] .expr[data-cref="${CSS.escape(ref)}"]`) : null;
+  if(!t){ toast("先点一下要写的那个表达式框", "bad"); return; }
+  const a = t.selectionStart ?? t.value.length, b = t.selectionEnd ?? a;
+  t.value = t.value.slice(0, a) + name + t.value.slice(b);
+  t.selectionStart = t.selectionEnd = a + name.length;
+  t.focus();
+  onExprInput(t);
+}
+async function applyParams(){
+  if(!S.sid){ toast("还没有会话", "bad"); return; }
+  // 只把**真的改了**的控制关系送上去：把没动过的也一起送，
+  // 一旦服务端那边同时有别的改动，就会拿旧值覆盖新值。
+  const ctrls = {};
+  Object.entries(S.pen.ctrls || {}).forEach(([ref, v]) => {
+    const c = currentCtl(ref);
+    const spec = {};
+    if(v.nodes && String(v.nodes.join("|")) !== String((c.control_nodes||[]).join("|")))
+      spec.nodes = v.nodes;
+    if(v.ref != null && v.ref !== (c.ref || "")) spec.ref = v.ref;
+    if(Object.keys(spec).length) ctrls[ref] = spec;
+  });
+  const n = Object.keys(S.pen.renames||{}).length + Object.keys(S.pen.exprs||{}).length
+            + Object.keys(ctrls).length;
+  if(!n) return;
+  busy(true);
+  try{
+    const j = await jpost("/api/params", {
+      sid:S.sid, renames:S.pen.renames, exprs:S.pen.exprs, ctrls});
+    if(!j.__ok || !j.ok){
+      // 整包被拒 = 一个字都没生效。**不**把待提交状态清掉，用户改改还能再来；
+      // 但要把服务端那句原话给出来（它指的是哪个名字/哪个表达式）。
+      toast("参数没有生效（整包被拒，电路未改动）—— " + jerr(j, "参数更新失败"), "bad");
+      return;
+    }
+    S.ir = j.ir; S.payload = j;
+    takeParams(j);
+    S.pen = {renames:{}, exprs:{}, ctrls:{}, dirty:false, focus:null};
+    // ★ 电路/表达式可能变了 → 上一次的求解结论一律作废，所有页跟着重画。
+    //   只重画参数页是不够的：网表里受控源那行用的是新名字，报告里也是，
+    //   插图里控制连线的指向也可能变了。
+    S.pack = null; S.solvePayload = null; S.solveError = null;
+    syncBadges();
+    renderAll();
+    const r = j.renames || [];
+    toast(`参数已应用：改名 ${r.length} 个、表达式 ${(j.exprs || []).length} 个、`
+          + `控制关系 ${(j.ctrls || []).length} 个`, "ok");
+  }finally{ busy(false); }
+}
+
 async function syncIr(){
   if(!S.sid) return;
   busy(true);
   try{
     const j = await jpost("/api/ir", {sid:S.sid, ir:S.ir});
-    if(!j.ok){ toast(j.error||"IR 更新失败","bad"); return; }
+    if(!j.__ok || !j.ok){
+      // ★ 改动没被服务端接受 —— 这时**绝不能**把本地那份继续摆在屏幕上：
+      //   屏上显示的是"我改成这样了"，后台存的还是旧的，**求解用的是后台那份**。
+      //   于是用户盯着自己刚改过的数去看结果，永远对不上号（这就是信息错位）。
+      //   所以先回读服务端权威的那一份，再把他改的那句错原封不动报出来。
+      //
+      //   为什么会走到这里：/api/ir **不做语义校验就拒绝**（编辑中的中间态要放行），
+      //   所以能在这抛多半是前端拼出的载荷本身坏了（IR 无法解析）——
+      //   也就是说这更像是我们的 bug，而不是用户填错了。那就更该把原文亮出来。
+      const why = jerr(j, "IR 更新失败");
+      const back = await resyncFromServer();
+      toast(back
+        ? "改动未被接受，已回读服务端实际保存的电路 —— " + why
+        : "改动未被接受，且回读失败，界面可能已与实际数据不一致 —— " + why, "bad");
+      return;
+    }
     S.payload = j; S.ir = j.ir;
     // 电路改过了，上一次的求解结论/失败原因都不能再显示
     S.pack = null; S.solvePayload = null; S.solveError = null;
-    renderEvidence(); renderConfirm(); renderNetlist(); renderIR(); renderFigure(); renderOverlay();
-    const n = (j.needs_human||[]).length;
-    const c = $("#cntConfirm"); c.hidden = !n; c.textContent = n;
+    takeParams(j);
+    syncBadges();
+    renderAll();
   } finally { busy(false); }
 }
 async function doSolve(){
@@ -1227,14 +2019,24 @@ async function doSolve(){
       //   外加三条"怎么办"的建议。toast 会把它挤成一行丢掉全部信息，
       //   所以改成在报告面板里以卡片原样呈现（保留换行）。
       S.pack = null; S.solvePayload = null;
-      S.solveError = j.error || "求解失败";
+      S.solveError = jerr(j, "求解失败");
+      // 没解成 → 参数取值也一并作废（后端在求解前就清了缓存，这里跟上）
+      S.pvb = null; S.pvbf = null; takeParams(j);
       renderSolve(); switchTab("solve");
       toast("求解未完成，原因见报告","bad");
       return;
     }
     S.solveError = null;
-    S.pack = j.pack; S.solvePayload = j; S.ir = j.ir;
-    renderSolve(); switchTab("solve");
+    S.pack = j.pack; S.solvePayload = j;
+    S.pvNote = null;
+    takeParams(j);
+    // ★ 求解会把 IR 里"自动插入的探针源""同步过的参数表"等回填下来，
+    //   `j.ir` 才是**权威**的那一份。所以这里必须写回，否则屏上的 IR 与
+    //   刚算出来那一份不是同一个东西（下一版参数名就对不上了）。
+    if(j.ir) S.ir = j.ir;
+    syncBadges();
+    renderAll();
+    switchTab("solve");
     toast(j.pack.overall_pass ? "全部校核通过" : "有校核未通过，请看报告",
           j.pack.overall_pass ? "ok" : "bad");
   } finally { busy(false); }
@@ -1533,6 +2335,11 @@ function dSnap(v){
   return g > 0 ? Math.round(v / g) * g : Math.round(v * 10) / 10;
 }
 const dKey = p => df(p.x) + "," + df(p.y);
+/** ``"x,y"`` → 点。控制端的下拉存的就是 key（几何坐标），这里还原成点。 */
+function dParseKey(k){
+  const [x, y] = String(k).split(",").map(Number);
+  return (Number.isFinite(x) && Number.isFinite(y)) ? {x, y} : null;
+}
 const dLen = (p, q) => Math.hypot(q.x - p.x, q.y - p.y);
 /** 把两点摆成横平竖直的一段：取变化大的那个轴。 */
 function dAxial(p, q){
@@ -1688,7 +2495,64 @@ function dAnalyze(){
     }
   });
 
+  // ---- 受控源：控制关系必须是**明确的**，不能留空
+  //   ★ 这一条要报成 bad（"会算错/建不起来"），不是 warn：受控源与独立源的
+  //   方程完全不同，而留空时解析器会**直接拒绝这个元件**（`Component.__post_init__`
+  //   里受控源没有控制支路就是硬错）。它不进网表，而剩下的电路照样可解 ——
+  //   用户拿到的就是"少一个元件"的答案。所以要在画的时候就说清楚。
+  D.comps.forEach(c => {
+    if(!isControlledKind(c.kind)) return;
+    const mode = kdef(c.kind).control_mode || "V";
+    const label = kdef(c.kind).label || c.kind;
+    if(mode === "V"){
+      const n = c.ctlNodes || [];
+      if(!n[0] || !n[1]){
+        issues.push({sev:"bad",
+          text:`${c.ref}（${label}）的**控制端还没选** —— 控制电压取自图上哪两点，只有你知道。`
+               + "在下面的表里选两个结点；不选的话解析会直接拒绝这个元件，"
+               + "剩下的电路照样算得出结果（一个少了一条支路的电路）。"});
+      } else if(dKey(n[0]) === dKey(n[1])){
+        issues.push({sev:"bad",
+          text:`${c.ref}（${label}）的两个控制端是**同一个结点** —— 控制量恒为 0，`
+               + "等于一个值为 0 的独立源，多半是选错了。"});
+      }
+    } else {
+      if(!c.ctlRef){
+        issues.push({sev:"bad",
+          text:`${c.ref}（${label}）**还没选被采样的支路** —— 控制电流取自哪条支路，只有你知道。`
+               + "在下面的表里选一个元件位号。"});
+      } else if(c.ctlRef === c.ref){
+        issues.push({sev:"bad",
+          text:`${c.ref}（${label}）不能采样自己的电流（自指）—— 那会给出自己等于自己的方程。`});
+      } else if(!D.comps.some(x => x.ref === c.ctlRef)){
+        issues.push({sev:"bad",
+          text:`${c.ref}（${label}）要采样的支路 ${c.ctlRef} 在画布上不存在 —— `
+               + "多半是那个元件被删了或改了位号。"});
+      }
+    }
+  });
+
   return {issues, marks, shorted};
+}
+
+/** 画布上**当前真实存在的结点**（元件端子 + 导线端点，去重）。
+    受控源的控制端下拉就用它 —— 让用户从图上确实存在的位置里选一个，
+    而不是手打坐标或名字：手打必然出现"打错一个字符"这类错，而它看起来完全正常。
+    返回 ``[{key, label}]``，label 是"坐标（挂在这里的端子）"，便于对照着图找。 */
+function dNodeOptions(){
+  const D = S.draw;
+  const at = new Map();
+  const add = (p, tag) => {
+    const k = dKey(p);
+    if(!at.has(k)) at.set(k, []);
+    if(tag) at.get(k).push(tag);
+  };
+  D.comps.forEach(c => { add(c.a, c.ref + "a"); add(c.b, c.ref + "b"); });
+  D.wires.forEach(w => { add(w.a, null); add(w.b, null); });
+  return Array.from(at.entries()).map(([key, tags]) => ({
+    key,
+    label: key + (tags.length ? `（${tags.join(" · ")}）` : "（纯导线拐点）"),
+  })).sort((x, y) => x.key.localeCompare(y.key));
 }
 
 /* ---------------- 画布渲染 ---------------- */
@@ -1723,7 +2587,15 @@ function dCompGeom(c){
 function dCompNode(c, A){
   const g = dCompGeom(c);
   const sel = S.draw.sel && S.draw.sel.uid === c.uid;
-  const bad = A.shorted.has(c.uid);
+  const shorted = A.shorted.has(c.uid);
+  // 受控源的控制关系没定 → 也画成"有问题"的样子。
+  // ★ 不画的话，画布上那个菱形和普通元件一样干净，而它其实**建不起来**：
+  //   用户看不出区别，直到提交才被拒，还不知道该改什么。
+  const ctlMode = isControlledKind(c.kind) ? (kdef(c.kind).control_mode || "V") : "";
+  const ctlBad = (ctlMode === "V") ? !(c.ctlNodes && c.ctlNodes[0] && c.ctlNodes[1])
+               : (ctlMode === "I") ? !c.ctlRef
+               : false;
+  const bad = shorted || ctlBad;
   const cls = "ca-component" + (sel ? " dsel" : "") + (bad ? " dbad" : "");
   const out = [];
   const stub = (x1,y1,x2,y2) => `<line x1="${df(x1)}" y1="${df(y1)}" x2="${df(x2)}" y2="${df(y2)}" stroke-width="2" data-uid="${c.uid}"/>`;
@@ -1740,6 +2612,10 @@ function dCompNode(c, A){
     + `<text x="0" y="-17" text-anchor="middle" class="lbl">${esc(c.ref)}</text>`
     + `<text x="0" y="-2" text-anchor="middle" class="val">${esc(c.value.trim() || "缺数值")}</text>`
     + `</g></g>`);
+  if(ctlBad){
+    out.push(`<text x="${df(g.mx)}" y="${df(g.my + 22)}" text-anchor="middle" class="val" `
+      + `style="fill:#b3261e">控制未定</text>`);
+  }
   // 端子把手：只有画布上有（提交 SVG 里不能有 —— 那是编辑用的东西）
   [[c.a, "a", 0], [c.b, "b", 1]].forEach(([p, side]) => {
     const m = A.marks.get(dKey(p));
@@ -1770,6 +2646,43 @@ function dCanvasInner(){
       + `x1="${df(w.a.x)}" y1="${df(w.a.y)}" x2="${df(w.b.x)}" y2="${df(w.b.y)}" stroke-width="2"/>`);
   });
   D.comps.forEach(c => out.push(dCompNode(c, A)));
+  // ---- 受控源的控制关系：**画出来**
+  //   ★ 这是"明确区分受控源与非受控源"在画布上的落地点。不画的话，
+  //   用户设了控制端但屏幕上没有任何反馈 —— 下一个来改图的人（可能就是三天后的他）
+  //   根本看不出这个菱形符号到底受谁控制，而受控与独立源的方程完全不同。
+  //   一律 `class="ca-deco"`：这几条线是**说明性**的，不是导线。
+  //   不标的话，导出 SVG 再导入时它们会被当成真的导线，凭空多出两条支路。
+  D.comps.forEach(c => {
+    if(!isControlledKind(c.kind)) return;
+    const kd = kdef(c.kind);
+    const mx = (c.a.x + c.b.x) / 2, my = (c.a.y + c.b.y) / 2;
+    const dash = `fill="none" stroke-width="1.6" stroke-dasharray="5 4" style="stroke:#8b6b3f"`;
+    if((kd.control_mode || "V") === "V"){
+      const n = c.ctlNodes || [];
+      if(n[0]){
+        out.push(`<line class="ca-deco" x1="${df(mx)}" y1="${df(my)}" `
+          + `x2="${df(n[0].x)}" y2="${df(n[0].y)}" ${dash}/>`);
+        out.push(`<circle class="ca-deco" cx="${df(n[0].x)}" cy="${df(n[0].y)}" r="3.5" `
+          + `style="fill:none;stroke:#8b6b3f;stroke-width:1.6"/>`);
+      }
+      if(n[1]){
+        out.push(`<line class="ca-deco" x1="${df(mx)}" y1="${df(my)}" `
+          + `x2="${df(n[1].x)}" y2="${df(n[1].y)}" ${dash}/>`);
+        out.push(`<circle class="ca-deco" cx="${df(n[1].x)}" cy="${df(n[1].y)}" r="3.5" `
+          + `style="fill:none;stroke:#8b6b3f;stroke-width:1.6"/>`);
+      }
+    } else if(c.ctlRef){
+      // 电流控制：指到被采样支路的中点，并写一句"取其电流"
+      const t = D.comps.find(y => y.ref === c.ctlRef);
+      if(t){
+        const tx = (t.a.x + t.b.x) / 2, ty = (t.a.y + t.b.y) / 2;
+        out.push(`<line class="ca-deco" x1="${df(mx)}" y1="${df(my)}" `
+          + `x2="${df(tx)}" y2="${df(ty)}" ${dash}/>`);
+        out.push(`<circle class="ca-deco" cx="${df(tx)}" cy="${df(ty)}" r="3.5" `
+          + `style="fill:none;stroke:#8b6b3f;stroke-width:1.6"/>`);
+      }
+    }
+  });
   // 结点圆点：度数（导线端点 + 元件端子）>= 3 才画，与读图判据一致
   const deg = new Map();
   D.wires.forEach(w => [w.a, w.b].forEach(p => deg.set(dKey(p), (deg.get(dKey(p)) || 0) + 1)));
@@ -1801,14 +2714,45 @@ function renderDraw(){
       <span class="dsym">${d.glyph}</span>${esc(d.label)} <span class="mono mut">${esc(k)}</span></button>`;
   }).join("");
 
-  const rows = D.comps.map((x, i) => `<tr data-di="${i}" class="${D.sel && D.sel.uid === x.uid ? "hovered" : ""}">
+  // 画布上的元件表。受控源多一格「控制」—— 控制关系必须在这里能定，
+  // 否则用户画完一个受控源就卡住了（提交必被拒，而界面上没有任何地方能填）。
+  const nodeOpts = dNodeOptions();
+  const rows = D.comps.map((x, i) => {
+    const ctl = isControlledKind(x.kind);
+    let ctlCell = `<td class="hint mut">—</td>`;
+    if(ctl){
+      const kd = kdef(x.kind);
+      const mode = kd.control_mode || "V";
+      if(mode === "V"){
+        const n = x.ctlNodes || [];
+        const opt = (cur, which) => `<option value="">（未选）</option>`
+          + nodeOpts.map(o => `<option value="${esc(o.key)}"${
+              o.key === (cur ? dKey(cur) : "") ? " selected" : ""}>${esc(o.label)}</option>`).join("");
+        ctlCell = `<td><div class="row" style="gap:5px">
+            <select data-d="cn0" data-i="${i}" title="控制端的第一个结点（电位被减数）">${opt(n[0], 0)}</select>
+            <select data-d="cn1" data-i="${i}" title="控制端的第二个结点（电位减数）">${opt(n[1], 1)}</select>
+          </div><div class="hint">受电压控制，增益单位 ${esc(kd.unit||"")}</div></td>`;
+      } else {
+        const opts = [`<option value="">（未选）</option>`]
+          .concat(D.comps.filter(y => y.ref !== x.ref)
+            .map(y => `<option value="${esc(y.ref)}"${
+              y.ref === (x.ctlRef||"") ? " selected" : ""}>${esc(y.ref)}（${esc(kdef(y.kind).label)}）</option>`));
+        ctlCell = `<td><select data-d="cref" data-i="${i}"
+            title="被采样的支路：控制电流取自这条支路上的电流">${opts.join("")}</select>
+          <div class="hint">受电流控制，增益单位 ${esc(kd.unit||"")}${
+            x.ctlRef ? `；采样时会在它里面串一个 0V 探针源（不是题目元件）` : ""}</div></td>`;
+      }
+    }
+    return `<tr data-di="${i}" class="${D.sel && D.sel.uid === x.uid ? "hovered" : ""}">
     <td class="num mono">${i + 1}</td>
     <td><input class="nm mono" data-d="ref" data-i="${i}" value="${esc(x.ref)}"></td>
-    <td><span class="chip flat mono">${esc(x.kind)}</span></td>
+    <td><span class="chip flat mono" title="${esc(kdef(x.kind).label)}">${esc(x.kind)}</span></td>
     <td><input class="vl mono" data-d="value" data-i="${i}" value="${esc(x.value)}" placeholder="缺"></td>
     <td class="hint mono">${esc(dKey(x.a))} → ${esc(dKey(x.b))}</td>
+    ${ctlCell}
     <td class="num"><button class="btn sm danger" data-d="delc" data-i="${i}">${IC.trash}</button></td>
-  </tr>`).join("");
+  </tr>`;
+  }).join("");
 
   const chk = c.issues.length
     ? `<ul class="plain">${c.issues.map(x => `<li class="${x.sev === "bad" ? "mut" : ""}">`
@@ -1889,7 +2833,7 @@ function renderDraw(){
     </div>
     <div class="body" style="padding:0 0 1px">
       <div class="tsc"><table>
-        <thead><tr><th class="num">#</th><th>位号</th><th>类型</th><th>取值</th><th>两端坐标</th><th class="num">操作</th></tr></thead>
+        <thead><tr><th class="num">#</th><th>位号</th><th>类型</th><th>取值 / 增益</th><th>两端坐标</th><th>控制（受控源才有）</th><th class="num">操作</th></tr></thead>
         <tbody>${rows || `<tr><td colspan="6"><div class="hint">还没有元件。从上面挑一个，在画布上拖一段放下。</div></td></tr>`}</tbody>
       </table></div>
     </div>
@@ -1935,6 +2879,15 @@ function dMoveCompTo(c, na, nb){
       if(dKey(w.b) === k) w.b = {x:nw.x, y:nw.y};
       D.wires[i] = dOrd(w);
     });
+    // ★ 挂在被挪动的那个端子上的**控制端**也要跟着走。
+    //   不跟的话，挪一下受控源，它的控制端就停在一个空位置上 ——
+    //   控制量变成"某个不存在结点的电压"，而画布上那条虚线还照画不误，
+    //   看起来完全正常。这一类"看着对、其实指到了空处"是最难查的。
+    D.comps.forEach(y => {
+      if(!y.ctlNodes) return;
+      y.ctlNodes = y.ctlNodes.map(np => (np && dKey(np) === k)
+        ? {x:nw.x, y:nw.y} : np);
+    });
   });
   c.a = na; c.b = nb;
 }
@@ -1953,13 +2906,24 @@ function dPlace(kind, p, q){
   }
   const endsWire = dWireEndsAt(ax.a).length + dWireEndsAt(ax.b).length;
   dPush();
-  S.draw.comps.push({uid: dUid(), kind, a: ax.a, b: ax.b,
-    ref: dUniqueRef(kind), value: DRAWV[kind] || ""});
+  const comp = {uid: dUid(), kind, a: ax.a, b: ax.b,
+    ref: dUniqueRef(kind), value: DRAWV[kind] || ""};
+  // ★ 受控源一落地就是**未定型**：控制关系（控制端在图上哪两点 / 采样哪条支路）
+  //   只有用户知道，画布不猜。但也不能就这么放它过去 —— 下面会把它标进自检清单，
+  //   提交时解析器也会明确报"控制关系没读出来"。两条路都不让它静默。
+  if(isControlledKind(kind)){
+    comp.ctlRef = "";
+    comp.ctlNodes = null;
+  }
+  S.draw.comps.push(comp);
   dNormalize();
   S.draw.sel = {type:"comp", uid: S.draw.comps[S.draw.comps.length - 1].uid};
   S.draw.result = null;
   renderDraw();
   if(endsWire) toast("已放下。两端落在原有导线上，已在该处切开为 T 接");
+  if(isControlledKind(kind)){
+    toast(`${comp.ref} 是受控源：控制关系还没定，在下面表里选「控制端 / 被采样支路」`, "bad");
+  }
   return true;
 }
 function dAddWire(p, q){
@@ -2028,8 +2992,37 @@ function wireDraw(){
       if(el.dataset.d === "ref"){
         const nv = el.value.trim() || dUniqueRef(c.kind);
         if(nv === c.ref) return;
+        // ★ 改位号要**连带检查**：可能有别的受控源正采样它。
+        //   不提示的话，采样关系会指向一个不存在的位号 —— 提交时才报错，
+        //   而那时用户已经在画别的地方了。
+        const dep = D.comps.filter(y => y.ctlRef === c.ref);
+        if(dep.length && !confirm(
+            `有 ${dep.length} 个受控源正采样 ${c.ref} 的电流（${dep.map(y=>y.ref).join("、")}）。`
+            + `改掉位号之后那些采样关系会失效，需要你重新指一遍。仍要改？`)){
+          el.value = c.ref;
+          return;
+        }
         dPush();
-        c.ref = nv; D.dirty = true; D.result = null; renderDraw(); }
+        const oldRef = c.ref;
+        c.ref = nv; D.dirty = true; D.result = null;
+        // 采样关系跟着走：位号改了但采样还指着旧名字 = 一条指向空处的引用
+        dep.forEach(y => { y.ctlRef = nv; });
+        renderDraw(); return; }
+      // ---- 受控源的控制关系
+      if(el.dataset.d === "cn0" || el.dataset.d === "cn1"){
+        const n = c.ctlNodes ? [...c.ctlNodes] : [null, null];
+        const idx = el.dataset.d === "cn0" ? 0 : 1;
+        n[idx] = el.value ? dParseKey(el.value) : null;
+        if(n[0] && n[1] && dKey(n[0]) === dKey(n[1])){
+          toast("控制端的两点是同一个结点 —— 控制量恒为 0，等于一个值为 0 的独立源", "bad");
+        }
+        dPush(); c.ctlNodes = n; D.dirty = true; D.result = null; renderDraw(); return; }
+      if(el.dataset.d === "cref"){
+        if(el.value === c.ref){
+          toast("不能采样自己的电流（自指）—— 那会给出自己等于自己的方程", "bad");
+          el.value = c.ctlRef || ""; return;
+        }
+        dPush(); c.ctlRef = el.value; D.dirty = true; D.result = null; renderDraw(); return; }
     };
     tb.onclick = e => {
       const b = e.target.closest('[data-d="delc"]'); if(!b) return;
@@ -2200,10 +3193,32 @@ function dSubmitSvg(){
       out.push(`<line x1="${df(c.a.x)}" y1="${df(c.a.y)}" x2="${df(c.b.x)}" y2="${df(c.b.y)}" stroke-width="2"/>`);
     }
     const val = c.value.trim();
+    // ---- 受控源的控制关系
+    // ★ 控制端同样**只写坐标**，理由与不写 `data-ca-a/b` 完全一样：
+    //   结点名是解析器要算出来的东西，画布替它定死就等于把用户的接法作废。
+    //   而被采样支路给的是**位号** —— 位号本来就是语义身份（画布自己也在写
+    //   `data-ca-ref`），不是几何算出来的，给它没问题。
+    // ★ 这里也**不写 defs 的 ctrl 标记去猜点什么**：控制关系没定就是不写，
+    //   让解析器明确说"这个受控源控制关系没读出来、请补上"，
+    //   而不是让它看到一个半对的标记然后把控制端猜错。
+    let ctlAttr = "";
+    if(isControlledKind(c.kind)){
+      const mode = kdef(c.kind).control_mode || "V";
+      ctlAttr += ` data-ca-ctrl-mode="${esc(mode)}"`;
+      if(mode === "V"){
+        const n0 = (c.ctlNodes || [])[0], n1 = (c.ctlNodes || [])[1];
+        if(n0 && n1){
+          ctlAttr += ` data-ca-ctrl-p1="${df(n0.x)},${df(n0.y)}"`
+                   + ` data-ca-ctrl-p2="${df(n1.x)},${df(n1.y)}"`;
+        }
+      } else if(c.ctlRef){
+        ctlAttr += ` data-ca-ctrl-ref="${esc(c.ctlRef)}"`;
+      }
+    }
     out.push(`<g class="glyph ca-component" transform="translate(${df(g.mx)},${df(g.my)}) rotate(${df(g.ang)})"`
       + ` data-ca-ref="${esc(c.ref)}" data-ca-kind="${esc(c.kind)}"`
       + ` data-ca-p1="${df(c.a.x)},${df(c.a.y)}" data-ca-p2="${df(c.b.x)},${df(c.b.y)}"`
-      + (val ? ` data-ca-value="${esc(val)}"` : "") + `>`);
+      + (val ? ` data-ca-value="${esc(val)}"` : "") + ctlAttr + `>`);
     out.push((S.draw.defs[c.kind] || {}).glyph || "");
     out.push(`<g transform="rotate(${df(-g.ang)})">`
       + `<text x="0" y="-16" text-anchor="middle" class="lbl">${esc(c.ref)}</text>`
@@ -2274,14 +3289,33 @@ async function loadToDraw(sid, opts){
     if(!j.ok){ toast(j.error || "取不到坐标", "bad"); return; }
     const np = j.node_pos || {};
     const comps = [], missing = [];
+    // ★ 受控源的控制关系必须**一起搬进画布**。丢掉它的话：
+    //   在画布上改一笔再提交，那个受控源就变成"没有控制支路"了 ——
+    //   解析器直接拒绝它，于是网表里少一个元件，而剩下的电路照样可解。
+    //   用户只是想挪一下位置，结果电路被悄悄改了，这是最不能接受的。
+    const ctlDropped = [];
     ((S.ir || {}).components || []).forEach((c, i) => {
       const pa = np[c.nodes[0]], pb = np[c.nodes[1]];
       if(!pa || !pb){ missing.push(c.ref); return; }
       const a = {x:dSnap(pa[0]), y:dSnap(pa[1])};
       const b = {x:dSnap(pb[0]), y:dSnap(pb[1])};
       if(a.x === b.x && a.y === b.y){ missing.push(c.ref + "（两端同点）"); return; }
-      comps.push({uid: dUid(), kind: c.kind, a, b,
-                  ref: c.ref, value: c.value == null ? "" : String(c.value)});
+      const item = {uid: dUid(), kind: c.kind, a, b,
+                    ref: c.ref, value: c.value == null ? "" : String(c.value)};
+      if(isControlledKind(c.kind)){
+        const ct = c.ctrl || {};
+        if((ct.mode || "V") === "V"){
+          const p0 = np[(ct.nodes||[])[0]], p1 = np[(ct.nodes||[])[1]];
+          item.ctlNodes = (p0 && p1)
+            ? [{x:dSnap(p0[0]), y:dSnap(p0[1])}, {x:dSnap(p1[0]), y:dSnap(p1[1])}]
+            : null;
+          if(!item.ctlNodes) ctlDropped.push(`${c.ref} 的控制端`);
+        } else {
+          item.ctlRef = ct.ref || "";
+          if(!item.ctlRef) ctlDropped.push(`${c.ref} 的被采样支路`);
+        }
+      }
+      comps.push(item);
     });
     if(!comps.length){ toast("这份电路一个元件都放不进画布（没有可用的结点坐标）", "bad"); return; }
     dPush();
@@ -2293,6 +3327,8 @@ async function loadToDraw(sid, opts){
     switchTab("draw");
     const extra = [];
     if(missing.length) extra.push(`${missing.length} 个元件没放进来（${missing.slice(0,4).join("、")}）`);
+    if(ctlDropped.length) extra.push(
+      `${ctlDropped.length} 处控制关系没能搬进画布（${ctlDropped.slice(0,3).join("、")}）—— 表里重选`);
     if(j.overlaps && j.overlaps.length) extra.push(`该版式有 ${j.overlaps.length} 处重叠`);
     toast(`已把 ${comps.length} 个元件放进画布（版式 ${j.layout}）`
           + (extra.length ? "；" + extra.join("；") : ""), extra.length ? "bad" : "ok");
@@ -2314,7 +3350,11 @@ async function loadSymbols(){
     const D = S.draw;
     D.defs = defs; D.style = j.style || ""; D.grid = j.grid || 20;
     D.ready = true;
-    renderDraw();
+    // ★ 元件元数据到了，**结构确认页与参数页也要重画**：
+    //   它们的类型下拉项、增益符号、SI 单位都是从这一份里读的。
+    //   只重画画布的话，就会出现"调色板里已经有受控源了，
+    //   确认页的类型下拉里却还没有"——那种错位很难被人发现。
+    renderAll(["draw", "confirm", "params"]);
   }catch(e){
     $('[data-p="draw"]').innerHTML = `<div class="card"><div class="body">
       <div class="errbox">${IC.warn}<div>取元件定义失败：${esc(e.message)}。
@@ -2358,7 +3398,7 @@ function emptyCard(text){
    ============================================================ */
 (async function init(){
   setTheme(localStorage.getItem("ca-theme") || "light");
-  ["overlay","confirm","netlist","ir","solve","figure","vision"].forEach(p => {
+  ["overlay","confirm","params","netlist","ir","solve","figure","vision"].forEach(p => {
     const el = $(`[data-p="${p}"]`);
     if(el && !el.children.length && p !== "overlay") el.innerHTML = emptyCard("先导入一张图");
   });

@@ -153,8 +153,9 @@ def template_mask(kind: str, vertical: bool = False):
 def all_templates(kinds: Iterable[str] | None = None,
                   verticals: Iterable[bool] = (False, True)) -> dict[str, "object"]:
     """所有模板。键形如 ``"R/h"`` / ``"V/v"``。"""
-    from ..ir.model import ALLOWED_KINDS
-    ks = list(kinds or sorted(ALLOWED_KINDS))
+    # ★ 读 BITMAP_KINDS 而不是 ALLOWED_KINDS：要的是"模板库里有画法"的那些。
+    from ..ir.model import BITMAP_KINDS
+    ks = list(kinds or sorted(BITMAP_KINDS))
     out = {}
     for k in ks:
         for v in verticals:
@@ -167,8 +168,8 @@ def save_sheet(path: "str") -> "str":
     from PIL import Image
 
     tiles = []
-    from ..ir.model import ALLOWED_KINDS
-    for k in sorted(ALLOWED_KINDS):
+    from ..ir.model import BITMAP_KINDS
+    for k in sorted(BITMAP_KINDS):
         for v in (False, True):
             im = draw_glyph(k, vertical=v).convert("L")
             tiles.append((f"{k}/{'v' if v else 'h'}", im))

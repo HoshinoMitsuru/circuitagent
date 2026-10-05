@@ -17,7 +17,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from .model import Circuit, CircuitError, REF_NODE
+from .model import (CONTROL_NOTE, GAIN_SYMBOL, Circuit, CircuitError,
+                    REF_NODE, CONTROLLED_KINDS, declared_direction)
 
 # 画布与图元尺寸（像素）
 PAD = 60
@@ -239,25 +240,78 @@ def _glyph_inductor() -> str:
     return "".join(p)
 
 
+def _glyph_dependent(kind: str) -> str:
+    """受控源：**菱形** + 增益记号（μ / gm / rm / α）。
+
+    菱形是教材里受控源的标准画法，四类共用；区分靠里面的字，
+    而那个字正是 IR 里 ``GAIN_SYMBOL[kind]`` 与网表卡上的增益符号 ——
+    同一个记号贯穿"画出来 / 参数表 / 网表"，不给人换一次记号的机会。
+
+    ★ 尺寸要当心：菱形顶点必须**正好落在端子** ``±BODY_HALF`` 上。
+    画小了，导线的自由端点会落进符号内部；画大了，导线会伸进符号里 ——
+    两种都会让几何回导把元件端点判错（与 ``_glyph_voltage`` 那次的
+    极性笔画是同一个坑）。
+    """
+    hx = BODY_HALF[kind]                 # 沿轴线的半长
+    hy = hx * 0.72                       # 半宽按比例，四类看起来一样"胖"
+    p = [f'<polygon points="{-hx},0 0,{-hy} {hx},0 0,{hy}" fill="none" stroke-width="2"/>']
+    p.append(f'<text x="0" y="4" text-anchor="middle" class="gainsym">'
+             f'{_esc(GAIN_SYMBOL.get(kind, kind))}</text>')
+    return "".join(p)
+
+
+def _glyph_E() -> str:
+    return _glyph_dependent("E")
+
+
+def _glyph_G() -> str:
+    return _glyph_dependent("G")
+
+
+def _glyph_H() -> str:
+    return _glyph_dependent("H")
+
+
+def _glyph_F() -> str:
+    return _glyph_dependent("F")
+
+
 GLYPHS = {
     "R": _glyph_resistor,
     "V": _glyph_voltage,
     "I": _glyph_current,
     "C": _glyph_capacitor,
     "L": _glyph_inductor,
+    # 受控源四类。它们进了 GLYPHS，前端画布的元件调色板就会自动多出这四个
+    # （``/api/symbols`` 直接吃这张表）——"手动画图要能画受控源"就是这么来的，
+    # 不用改前端一行。
+    "E": _glyph_E,
+    "G": _glyph_G,
+    "H": _glyph_H,
+    "F": _glyph_F,
 }
 
 #: 各符号沿支路轴线的**半长**（本体占多宽）。
 #: 这个数与符号画法必须严格对齐：画大了导线会塞进符号里，
 #: 画小了导线的自由端点会落在符号内部，两种都会让几何回导把元件端点判错。
-BODY_HALF: dict[str, float] = {"R": 15.0, "V": 13.0, "I": 13.0, "C": 12.0, "L": 19.0}
+BODY_HALF: dict[str, float] = {"R": 15.0, "V": 13.0, "I": 13.0, "C": 12.0, "L": 19.0,
+                             "E": 17.0, "G": 17.0, "H": 17.0, "F": 17.0}
 
 #: 中文名与数值单位。**画布的元件调色板直接吃这张表** ——
 #: 后端 `GLYPHS` 里加一种元件，前端的调色板就自动多一个（不用改前端）。
 KIND_LABEL: dict[str, str] = {
     "R": "电阻", "V": "电压源", "I": "电流源", "C": "电容", "L": "电感",
+    # ★ 受控源的标签里必须**带上"受控"二字**。画布调色板、
+    #   结构确认表、报告都读这张表 —— 标签一含糊，用户就没法一眼分清
+    #   "电压源"和"电压控制电压源"，而那正是最容易读错、后果最大的一处。
+    "E": "受控·压控压源", "G": "受控·压控流源",
+    "H": "受控·流控压源", "F": "受控·流控流源",
 }
-KIND_UNIT: dict[str, str] = {"R": "Ω", "V": "V", "I": "A", "C": "F", "L": "H"}
+KIND_UNIT: dict[str, str] = {"R": "Ω", "V": "V", "I": "A", "C": "F", "L": "H",
+                             "E": "V/V", "G": "S", "H": "Ω", "F": "A/A"}
+
+#: 受控源类型的完整说明（画布提示与报告都用它，文字来自 params.CONTROL_NOTE）
+KIND_DETAIL: dict[str, str] = dict(CONTROL_NOTE)
 
 
 def theme_colors(dark: bool = False) -> dict[str, str]:
@@ -291,6 +345,15 @@ def style_block(dark: bool = False) -> str:
 .circuit-svg .val{{font-size:12px;fill:{sub}}}
 .circuit-svg .node{{font-size:12px;fill:{sub}}}
 .circuit-svg .pol{{font-size:14px;font-weight:700;fill:{accent}}}
+/* 受控源：菱形里的增益记号、以及符号旁那行"受谁控制"。
+   两者都用 accent 色 —— 同一张图上"受控"这件事必须一眼可辨，
+   它和"这是个普通电压源"是完全不同的两件事。 */
+.circuit-svg .gainsym{{font-size:13px;font-weight:700;fill:{accent};stroke:none}}
+.circuit-svg .ctl{{font-size:11px;fill:{accent};stroke:none}}
+/* 控制连线本身是 ca-deco，它由下面的 .ca-deco 规则免描边。
+   ★ 注意 CSS 特意性：上面那条 `.circuit-svg path,.circuit-svg line` 会把
+   line 描成 wire 色，所以 ca-deco 的规则必须写在它**之后**（这里就是之后），
+   否则虚线会被描黑、看起来像真的导线。 */
 .circuit-svg path,.circuit-svg line,.circuit-svg rect,.circuit-svg circle{{stroke:{wire}}}
 .circuit-svg .glyph path,.circuit-svg .glyph line,.circuit-svg .glyph rect,.circuit-svg .glyph circle{{stroke:{fg}}}
 .circuit-svg .body{{fill:none}}
@@ -517,6 +580,30 @@ def render_svg(
         # 语义标记：让本工具画出来的 SVG 能被 **精确无损地再次导入**。
         # 这是"可逆"的落地 —— 回绘图既能给人看，也能给机器读，
         # 于是"导出 SVG -> 重新导入 -> 三法对账"成了一条真正的回归测试链路。
+        # 受控源的**控制支路**也要一起带上，否则"导出 → 再导入"会丢控制关系：
+        # 而 IR 里受控源没有控制支路是硬错，于是回导会直接失败（或者更糟：
+        # 被当成独立源）。控制端给**坐标**而不是节点名 —— 理由见
+        # topology._control_from_hint：结点名是解析层算出来的，不该由画图的一方定死。
+        ctl_attr = ""
+        if c.kind in CONTROLLED_KINDS and c.ctrl is not None:
+            mode = c.ctrl.mode
+            ctl_attr = f' data-ca-ctrl-mode="{_esc(mode)}"'
+            if mode == "V" and c.ctrl.nodes:
+                cp = [node_pos.get(n) for n in c.ctrl.nodes]
+                if all(cp):
+                    ctl_attr += (f' data-ca-ctrl-p1="{cp[0][0]:.3f},{cp[0][1]:.3f}"'
+                                 f' data-ca-ctrl-p2="{cp[1][0]:.3f},{cp[1][1]:.3f}"')
+            elif mode == "I" and c.ctrl.ref:
+                ctl_attr += f' data-ca-ctrl-ref="{_esc(c.ctrl.ref)}"'
+                # ★ 自动插入的探针位号必须一起带上，否则"导出 → 再导入"会**再插一遍**：
+                #   回导时 sense_ref 丢了，ensure_sense_sources 会以为还没插过，
+                #   于是又串一个 0V 源、又多一个内部节点。电学行为不变（0V 串联
+                #   不改变任何东西），但元件数/节点数会**每往返一次涨一次**，
+                #   而参数表与报告里都会多出"题目里没有的东西"。
+                if c.ctrl.sense_ref:
+                    ctl_attr += f' data-ca-ctrl-sense="{_esc(c.ctrl.sense_ref)}"'
+            if c.ctrl.expr:
+                ctl_attr += f' data-ca-ctrl-expr="{_esc(c.ctrl.expr)}"'
         parts.append(f'<g class="glyph ca-component" transform="translate({mx:.2f},{my:.2f}) '
                      f'rotate({ang:.2f})" '
                      f'data-ca-ref="{_esc(c.ref)}" data-ca-kind="{_esc(c.kind)}" '
@@ -524,6 +611,7 @@ def render_svg(
                      f'data-ca-p1="{p1[0]:.3f},{p1[1]:.3f}" '
                      f'data-ca-p2="{p2[0]:.3f},{p2[1]:.3f}"'
                      + (f' data-ca-value="{c.value}"' if c.value is not None else "")
+                     + ctl_attr
                      + '>')
         if glyph:
             parts.append(glyph())
@@ -540,6 +628,17 @@ def render_svg(
                          f'<text x="0" y="{LABEL_DY+15}" text-anchor="middle" class="val">'
                          f'{_esc(_value_label(c))}</text></g>')
         parts.append('</g>')
+
+        # ---- 受控源：控制连线 + 控制关系文字（都在旋转坐标系之外）
+        #   ★ 放在 </g> 之后：控制连线连的是**绝对坐标**（控制端结点位置），
+        #     跟着元件一起旋转就会指到错的地方 —— 而那正是"图看着没问题、
+        #     控制关系其实是错的"这类最难发现的错位。
+        if c.kind in CONTROLLED_KINDS:
+            parts.append(_control_annotation(c, circuit, node_pos, (mx, my), accent))
+            if show_labels:
+                parts.append(
+                    f'<text x="{mx:.2f}" y="{my + 30:.2f}" text-anchor="middle" '
+                    f'class="ctl">{_esc(_control_label(c))}</text>')
 
     # ---- 结点圆点（度数 >= 3 才画，与读图判据一致）
     for n, (x, y) in node_pos.items():
@@ -563,6 +662,9 @@ def render_svg(
 
 def _value_label(c) -> str:
     if c.value is None:
+        if c.kind in CONTROLLED_KINDS:
+            # 受控源可以没有增益 —— 它可能用自定义表达式描述控制关系
+            return "表达式" if (c.ctrl and c.ctrl.expr) else "缺增益"
         return "缺数值"
     kind = c.kind
     if kind == "R":
@@ -575,7 +677,81 @@ def _value_label(c) -> str:
         return f"{c.value_str()}F"
     if kind == "L":
         return f"{c.value_str()}H"
+    if kind in CONTROLLED_KINDS:
+        # ★ 增益的记号与单位必须与参数表/网表卡一致：同一个 μ 在
+        #   图上、在参数表里、在 ngspice 卡上都是同一个符号。
+        return f"{GAIN_SYMBOL.get(kind, '')}={c.value_str()}{KIND_UNIT.get(kind, '')}"
     return c.value_str()
+
+
+def _control_label(c) -> str:
+    """受控源的**控制关系**一行文字（画在符号旁）。
+
+    为什么要画出来：菱形符号本身只说明"这是受控源"，**说明不了它受谁控制**。
+    而受控源最容易读错、后果最大的正是这一处 —— 控制端接在别的节点上，
+    整题答案就换个样，而三法互校与功率守恒都拦不住（三条路径共用同一份 IR）。
+    所以图上必须直接写出控制关系，让人一眼能核。
+    """
+    ctrl = getattr(c, "ctrl", None)
+    if ctrl is None:
+        return "控制关系未给出"
+    if ctrl.expr:
+        return f"控制={ctrl.expr}"
+    if ctrl.mode == "V" and ctrl.nodes:
+        return f"控制 V({ctrl.nodes[0]})−V({ctrl.nodes[1]})"
+    if ctrl.mode == "I":
+        return f"控制 i({ctrl.sampling})"
+    return "控制关系未给出"
+
+
+def _control_annotation(c, circuit: Circuit,
+                        node_pos: dict[str, tuple[float, float]],
+                        pos: tuple[float, float], accent: str) -> str:
+    """受控源的控制连线（**虚线 + 空心圆点 + 文字**）。
+
+    ★★ 整段都打 ``class="ca-deco"``，这是**必须的**，不是装饰性选择。
+      回导解析器把 ``<line>``/``<path>`` 一律当导线；控制连线若不带装饰标记，
+      "导出 SVG → 再导入"就会**多出两条导线**、把控制端节点和输出端节点
+      额外接起来 —— 拓扑被改掉，而且**不报错**。
+      ``_is_decoration`` 认 ``ca-deco``，所以这里的每一笔都带着它。
+
+    控制端坐标拿不到时返回空串 —— 此时图上仍有文字说明
+    （见 :func:`_control_label`），不会出现"看起来是受控源、却完全没提
+    受谁控制"这种更容易误读的状态。
+    """
+    ctrl = getattr(c, "ctrl", None)
+    if ctrl is None:
+        return ""
+    mx, my = pos
+    out: list[str] = []
+    targets: list[tuple[float, float]] = []
+
+    if ctrl.mode == "V" and ctrl.nodes:
+        for n in ctrl.nodes:
+            q = node_pos.get(n)
+            if q:
+                targets.append((q[0], q[1]))
+    else:
+        # 电流控制型：把虚线引到**被采样支路的中点**（那才是"电流所在的地方"。
+        # 引到端点会让人以为控制量取自那个节点 —— 电流取的是整条支路）。
+        name = ctrl.sampling or ctrl.ref
+        try:
+            target = circuit.by_ref(name)
+        except CircuitError:
+            target = None
+        if target is not None:
+            p1 = node_pos.get(target.nodes[0])
+            p2 = node_pos.get(target.nodes[1])
+            if p1 and p2:
+                targets.append(((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2))
+
+    for (qx, qy) in targets:
+        out.append(f'<line class="ca-deco" x1="{mx:.2f}" y1="{my:.2f}" '
+                   f'x2="{qx:.2f}" y2="{qy:.2f}" fill="none" stroke="{accent}" '
+                   'stroke-width="1.3" stroke-dasharray="5 4"/>')
+        out.append(f'<circle class="ca-deco" cx="{qx:.2f}" cy="{qy:.2f}" r="3.2" '
+                   f'fill="none" stroke="{accent}" stroke-width="1.3"/>')
+    return "".join(out)
 
 
 def _esc(s: Any) -> str:

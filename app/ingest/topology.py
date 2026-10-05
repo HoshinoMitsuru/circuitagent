@@ -31,7 +31,9 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..ir.model import Circuit, Component, CircuitError, Evidence
+from ..ir.model import (ALLOWED_KINDS, CONTROLLED_KINDS, CONTROL_MODE,
+                        CONTROL_NOTE, Control, Circuit, Component, CircuitError,
+                        Evidence)
 
 DEFAULT_TOL = 6.0
 #: 端点配对的上限距离。因为槽位还要求"图形必须横跨两个端子"（见 detect_component_slots），
@@ -540,7 +542,12 @@ def build_topology(
     if geo.hints:
         for h in geo.hints:
             kind = str(h.get("kind", "")).upper()
-            if kind not in ("R", "V", "I", "C", "L"):
+            # ★ 这里**不能**写死成 R/V/I/C/L。
+            #   写死之后的症状极其隐蔽：受控源被一条 warning 悄悄跳过，
+            #   于是网表里少一个元件、剩下的电路照样可解，三法互校也照样全过
+            #   （三条路径共用同一份"少了元件"的 IR）—— 用户拿到一个**看似合理**
+            #   的答案。所以判据必须跟着 IR 的权威定义走，加一种元件这里自动跟上。
+            if kind not in ALLOWED_KINDS:
                 geo.warnings.append(f"语义提示里的元件类型 {kind!r} 不认识，已跳过")
                 continue
             # ★ 用**坐标**去定位几何结点，用**IR 节点名**去命名 —— 两者分工明确。
@@ -566,6 +573,25 @@ def build_topology(
                     "端子连起来了），请人工核对这个元件的两个端点位置。"
                 )
                 continue
+
+            # ---- 受控源：控制支路必须一起还原，否则这个元件**根本建不出来**
+            #   （IR 里受控源没有控制支路是硬错，见 Component.__post_init__）。
+            #   所以控制关系缺失时不能"建一个半成品"，只能明确跳过并说清怎么办 ——
+            #   比整个解析崩掉好，也比静默建出一个方程不对的元件好。
+            ctrl, ctl_why = (
+                _control_from_hint(h, kind, centroids, root_of, node_names, tol)
+                if kind in CONTROLLED_KINDS else (None, None))
+            if kind in CONTROLLED_KINDS and ctrl is None:
+                skipped.append({"ref": h.get("ref"), "why": "control_undefined",
+                                "detail": ctl_why})
+                geo.warnings.append(
+                    f"**{h.get('ref')}（{kind}，{CONTROL_NOTE.get(kind, kind)}）"
+                    f"的控制关系没有读出来**：{ctl_why}。"
+                    "受控源和独立源的电路方程完全不同，控制支路不敢猜 —— "
+                    "请把它的控制端（或它采样的那条支路）补上再重新解析。"
+                )
+                continue
+
             ref = str(h.get("ref") or Circuit.auto_ref(kind, used_refs))
             if ref in used_refs:
                 ref = Circuit.auto_ref(kind, used_refs)
@@ -573,6 +599,7 @@ def build_topology(
             comps.append(Component(
                 ref=ref, kind=kind, nodes=(a, b),
                 value=h.get("value"),
+                ctrl=ctrl,
                 evidence=Evidence(
                     source="exact", confidence=1.0,
                     detail="来自 SVG 语义标记（data-ca-*）：拓扑与两端次序均无损读取"),
@@ -622,10 +649,39 @@ def build_topology(
             "或者元件符号不是本工具认识的画法。"
             "**这种情况需要人工在界面上补元件，不能靠猜。**"
         )
-    if n_short:
+
+    # ---- 被跳过的元件：**每一条原因都要报出来**
+    #   ★ 这一段以前只报 `short_circuit` 一种。其余几种（端点落不到结点、
+    #     受控源控制关系没读出来、几何槽位挑不出来）被写进 `report["skipped_components"]`
+    #     就没人再读了 —— 而那个字段**全项目没有任何消费方**。
+    #     症状是：图里少了一个元件，网表照样生成、三法照样一致、报告照样"通过"，
+    #     因为三条求解路径共用的是同一份**残缺**的 IR。用户拿到的是一个
+    #     基于残缺电路算出来的、看起来完全合理的答案。这是本项目最不能出现的一类错。
+    #   所以这里按原因分类逐条列出，并且**明说后果**。
+    if skipped:
+        REASON_NOTE = {
+            "short_circuit":
+                "两端被判为同一个结点（短路嫌疑）—— 多半是符号本体被当成了导线",
+            "endpoint_off_geometry":
+                "端点坐标落不到任何结点上 —— 该元件那一端没接到导线/别的端子上",
+            "control_undefined":
+                "受控源的控制关系没读出来 —— 受控源与独立源的方程完全不同，控制支路不敢猜",
+            "no_slot":
+                "图上找不到这个元件的符号槽位（画法不认识，或者符号被别的东西压住了）",
+        }
+        by_reason: dict[str, list[str]] = {}
+        for s in skipped:
+            by_reason.setdefault(s["why"], []).append(str(s.get("ref") or "?"))
+        lines = []
+        for why, refs in sorted(by_reason.items()):
+            lines.append(f"{len(refs)} 个（{', '.join(refs)}）：{REASON_NOTE.get(why, why)}")
         geo.warnings.append(
-            f"有 {n_short} 个元件两端被判为同一结点（短路嫌疑）已跳过，"
-            "请在界面上核对这几个元件的端点。"
+            f"**有 {len(skipped)} 个元件没能建立起来，它们不在网表里** ——\n  "
+            + "\n  ".join(lines)
+            + "\n这几条支路一律**没有被偷偷换掉或补上**，就是缺了。"
+              "因此下面算出来的结果对应的是**比原图少了几条支路**的电路："
+              "三法互校与功率守恒都拦不住这类错（三条路径共用同一份残缺的 IR）。"
+              "**请先在图/表上把这几个元件补齐，再采信任何数值。**"
         )
 
     circ = Circuit(
@@ -680,6 +736,50 @@ def _root_at(pos, centroids, root_of, tol: float) -> int | None:
 def _name_at(pos, centroids, root_of, node_names, tol) -> str | None:
     r = _root_at(pos, centroids, root_of, tol)
     return node_names.get(r) if r is not None else None
+
+
+def _control_from_hint(h, kind, centroids, root_of, node_names, tol
+                       ) -> tuple["Control | None", str]:
+    """把语义标记里的 ``ctrl`` 还原成 ``Control``。返回 ``(control, 失败原因)``。
+
+    ★ **控制端走坐标、被采样支路走位号**，这不是随手定的：
+      * 电压控制的控制端是"图上另外两个位置"→ 只有位置是几何事实，
+        结点名是本层算出来的（与元件自己两个端子完全同一套处理）。
+        让上游直接写结点名就等于把命名权收走了，一旦图上的接法改了，
+        标记里的名字还停在旧值上 —— 而它长得完全正常，没人会发现。
+      * 电流控制的控制量是"某条支路上的电流"，位号本来就是**语义身份**
+        （与 ``data-ca-ref`` 同性质），不是几何算出来的，所以可以直接带。
+
+    失败一律返回原因字符串，**不抛异常**：一个元件的控制关系缺失
+    不该让整张图的解析崩掉 —— 但也不能默默少一个元件（那会给出一个
+    看起来合理的错答案），所以由调用方明确跳过并留痕。
+    """
+    ctl = h.get("ctrl") or {}
+    mode = str(ctl.get("mode") or CONTROL_MODE.get(kind) or "").strip().upper()
+    if mode not in ("V", "I"):
+        return None, "标记里没有说明它是电压控制还是电流控制（data-ca-ctrl-mode）"
+    if mode != CONTROL_MODE.get(kind):
+        return None, (f"标记说它是{'电压' if mode == 'V' else '电流'}控制，"
+                      f"但 {kind} 这种受控源按定义是"
+                      f"{'电压' if CONTROL_MODE.get(kind) == 'V' else '电流'}控制 —— "
+                      "两者矛盾，说明标记写错了")
+    expr = str(ctl.get("expr") or "").strip()
+
+    if mode == "V":
+        na = _name_at(ctl.get("cp1"), centroids, root_of, node_names, tol)
+        nb = _name_at(ctl.get("cp2"), centroids, root_of, node_names, tol)
+        if na is None or nb is None:
+            return None, ("控制端坐标 " + repr(ctl.get("cp1")) + " / " + repr(ctl.get("cp2"))
+                          + " 落不到任何几何结点上（漏画了控制端，或者控制端没接在图上的结点）")
+        if na == nb:
+            return None, f"控制端的两点都落在结点 {na} 上 —— 控制量恒为 0，多半是画错了"
+        return Control(mode="V", nodes=(na, nb), expr=expr), ""
+
+    ref = str(ctl.get("ref") or "").strip()
+    if not ref:
+        return None, "没有给出被采样的支路位号（data-ca-ctrl-ref）"
+    sense = str(ctl.get("sense") or "").strip()
+    return Control(mode="I", ref=ref, expr=expr, sense_ref=sense), ""
 
 
 def _centroid_of_root(r, root_of, centroids) -> tuple[float, float]:

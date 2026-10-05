@@ -18,8 +18,10 @@ from fractions import Fraction
 from typing import Any
 
 from ..ir.model import Circuit, CircuitError
+from ..ir.params import params_view
 from .base import Solution
 from .branch import branch_current_method
+from .controlled import parameter_values
 from .equivalence import superposition
 from .linalg import frac_float, frac_str
 from .mna import node_voltage_method
@@ -46,6 +48,33 @@ def _close(a: Any, b: Any) -> bool:
     if fa != fa or fb != fb:                     # NaN
         return False
     return abs(fa - fb) <= max(ABS_TOL, REL_TOL * max(abs(fa), abs(fb)))
+
+
+def _by_binder(circuit: Circuit, values: dict[str, Any]) -> dict[str, Any]:
+    """``{绑定 -> 取值}``，键写作 ``"branch_i:R1"`` / ``"node_u:3"``。
+
+    ★ **为什么要有这一份**：用户随时能改参数名，而改名会让所有
+    "按名字索引"的表当场失效 —— 界面上就变成"这个参数还没有取值"。
+    可电路没变、解也没变，变的只是名字：那是**假信息**，会让人回头去改一张
+    本来没问题的图。绑定（哪条支路的电流、哪个结点的电压）不随改名而变，
+    用它当键就绕开了这个问题。
+
+    键的写法与 ``params_view()["by_binder"]`` 完全一致（都是 ``kind:key``），
+    界面拿 ``item.binder`` 拼一下就能查到 —— 两边一旦分家就是"查不到值"。
+
+    查不到值的参数**直接略过**，不填 0、不填 None：``i`` 待定本身就是
+    一条正常的物理结论（理想短线并联时电流不唯一），界面上显示"—"才是对的。
+    """
+    if not values:
+        return {}
+    out: dict[str, Any] = {}
+    for e in (params_view(circuit).get("items") or []):
+        sym = e.get("symbol")
+        if sym not in values:
+            continue
+        bk, key = e.get("binder") or ("", "")
+        out[f"{bk}:{key}"] = values[sym]
+    return out
 
 
 def run_all(
@@ -103,6 +132,73 @@ def run_all(
 
     exact_keys = [k for k in ("mna", "branch") if k in solutions]
     valid_keys = [k for k in METHODS if k in solutions]
+
+    # ------------------------------------------------ 参数名 -> 数值
+    # ★ 求解跑的是**化简后/展开后**的电路，而参数表属于**原始**电路，
+    #   两者不是同一张。所以要显式把两条对应关系补上：
+    #     * 被电感合并掉的节点名 → 代表元（不补，``u_3`` 就"没有值"）；
+    #     * 被电容开路移除的支路 → 已由 recover_shorted_currents 反算出来
+    #       （不补，``i_L1`` 也"没有值"）。
+    #   漏掉它们，界面上就会冒出一串"该参数暂无取值"，而电路其实算得好好的 ——
+    #   用户会以为是自己画错了，转头去改一张没问题的图。
+    param_values: dict[str, Any] = {}
+    try:
+        alias: dict[str, str] = {}
+        if rep is not None:
+            for group in rep.merged_groups:       # [代表元, 被合掉的...]
+                for n in group[1:]:
+                    alias[str(n)] = str(group[0])
+        base_sol = solutions["mna"]
+        node_v: dict[str, Any] = {}
+        for n in original.nodes:
+            node_v[n] = base_sol.node_voltages.get(alias.get(n, n))
+
+        # ★ 化简层移除的支路不在 mna 的解里，但它们的取值**是已知的**，
+        #   只是存在别处：
+        #     * 电感（被短路合并）→ `recover_shorted_currents` 用原节点 KCL
+        #       反算出的电流，落在化简报告的 `shorted[*]["current"]`；
+        #     * 电容（视为开路）→ 直流稳态下 i_C = C·du/dt = 0，这是定义。
+        #   不并进来的话，界面上 `i_L1`／`i_C1` 会显示成"暂无取值"，
+        #   而用户要的恰恰是 i_L1（电感电流是这类题的常见答案）。
+        currents: dict[str, Any] = dict(base_sol.branch_currents)
+        if rep is not None:
+            for e in rep.shorted:
+                raw = e.get("current")
+                if raw is None:
+                    continue                     # "i 待定"是正常结论，不猜
+                try:
+                    currents.setdefault(e["ref"], Fraction(str(raw)))
+                except (ValueError, ZeroDivisionError):
+                    currents.setdefault(e["ref"], raw)
+            for e in rep.opened:
+                currents.setdefault(e["ref"], Fraction(0))
+
+        param_values = parameter_values(original, node_v, currents)
+        # ★ 精确值一律走 frac_str：这是个**响应体**，Fraction 直接塞进
+        #   JSONResponse 会抛 "Object of type Fraction is not JSON serializable"
+        #   —— 而且那句不在任何 try 里，整个 /api/solve 就变 500 了。
+        #   界面要显示小数时读 param_values_float，两栏同时给，不靠前端解析分数。
+        #   注意参数取值里**混着**分数与浮点：元件值本来就是 float（"R1 = 4700"），
+        #   所以两个转换都要能接住 float，不能直接调 frac_float(v)。
+        def _as_float(v: Any) -> Any:
+            if isinstance(v, Fraction):
+                return frac_float(v)
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
+        param_values_float = {k: _as_float(v) for k, v in param_values.items()}
+        param_values = {
+            k: (frac_str(v) if isinstance(v, Fraction) else v)
+            for k, v in param_values.items()
+        }
+    except Exception as e:                         # noqa: BLE001
+        # 参数取值是**派生视图**，坏了不该毁掉已经算好的三法对账。
+        # 但也不能装没发生 —— 显式留痕，界面上会看到这一条。
+        param_values = {}
+        param_values_float = {}
+        failures["params"] = f"参数取值渲染失败：{type(e).__name__}: {e}"
 
     # ------------------------------------------------ 节点电压对账表
     node_rows = []
@@ -204,6 +300,23 @@ def run_all(
         "ngspice_availability": probe_availability(),
         "node_table": node_rows,
         "branch_table": br_rows,
+        # ---- 参数体系：界面、报告、"哪个名字对应哪个量"都读这一份，
+        #   不各自拼名字（拼法一旦和参数表的自动命名分家就会出现
+        #   "报告里有个名字、参数表里没有"这种错位）。
+        "params": params_view(original),
+        # 按**参数名**索引：报告文本、"i_R1 等于多少"这类按名取值的场合读它。
+        "param_values": param_values,
+        "param_values_float": param_values_float,
+        # ★ 按**绑定**索引：`"branch_i:R1" -> "1/20"`。
+        #   界面读这一份而不是上面那份 —— 因为用户随时可以改名，
+        #   而"改名"恰恰会让所有按名索引的表当场失效：界面上会显示成
+        #   "这个参数还没有取值"，可电路没变、解也没变，变的只是名字。
+        #   那是**假信息**，会让人以为自己画错了电路。
+        #   绑定（哪条支路的电流、哪个结点的电压）是不随改名而变的，用它当键就没事。
+        #   `params_view()` 的 `by_binder` 与这里的键是同一套写法（`kind:key`），
+        #   一一对得上，界面拿 `item.binder` 拼一下就能查到值。
+        "param_values_by_binder": _by_binder(original, param_values),
+        "param_values_by_binder_float": _by_binder(original, param_values_float),
         "exact_crosscheck": {"ok": exact_match, "detail": exact_detail},
         "verifications": verifications,
         "superposition": super_info,

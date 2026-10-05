@@ -1107,9 +1107,19 @@ def _unexplained_clusters(mask, slots: list[SymbolSlot]) -> list[dict[str, Any]]
 
 def probe() -> dict[str, Any]:
     """给 /api/health 用的体检。只报模板库状态，不读图。"""
-    from ..ir.model import ALLOWED_KINDS
-    out = {"templates": [], "kinds": sorted(ALLOWED_KINDS)}
-    for k in sorted(ALLOWED_KINDS):
+    from ..ir.model import ALLOWED_KINDS, BITMAP_KINDS
+    # ★ 枚举的是"有画法的符号"，不是"IR 装得下的符号"：
+    #   受控源在 ALLOWED_KINDS 里，但模板库里没有它 —— 拿它去要模板会抛
+    #   ``ValueError: 没有 'E' 这个符号的画法``（实测把 /api/health 打成 500）。
+    #   ``kinds`` 报 ALLOWED_KINDS（支持范围），``templates`` 只报能画的那些，
+    #   并把差集单列出来 —— 两者不是一回事，混在一起就没人看得出差在哪。
+    out = {
+        "templates": [],
+        "kinds": sorted(ALLOWED_KINDS),
+        "bitmap_kinds": sorted(BITMAP_KINDS),
+        "no_template_kinds": sorted(ALLOWED_KINDS - BITMAP_KINDS),
+    }
+    for k in sorted(BITMAP_KINDS):
         for v in (False, True):
             m = T.template_mask(k, v)
             out["templates"].append({"kind": k, "orientation": "v" if v else "h",

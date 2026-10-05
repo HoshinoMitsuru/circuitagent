@@ -34,6 +34,7 @@ sys.path.insert(0, str(ROOT))
 from fastapi.testclient import TestClient                                 # noqa: E402
 
 from app.api import server as srv                                         # noqa: E402
+from app.ir.model import ALLOWED_KINDS, BITMAP_KINDS, CONTROLLED_KINDS    # noqa: E402
 from app.ir.render import BODY_HALF, GLYPHS                               # noqa: E402
 from app.vision import config as vconf                                    # noqa: E402
 
@@ -59,6 +60,30 @@ V1 1 0 DC 10
 L1 1 0 1m
 R1 1 2 5
 R2 2 0 5
+.end
+"""
+
+# 电流控制型受控源 + 系统插入的 0V 探针 + 一行语义标记。
+# ★ 这一份是本项目**自己导出**的网表该有的样子（to_spice 的输出格式）：
+#   探针不是题目元件，题目里说的是 R1；只有那行 `* ca-ctrl` 能把两者分开。
+NET_CTRL = """受控源（含 0V 探针与语义标记）
+V1 1 0 DC 10
+R1 1 ns_R1 1000
+R2 2 0 1000
+* ca-ctrl H1 mode=I ref=R1 sense=Vsense_R1
+H1 3 0 Vsense_R1 -2000
+R3 3 0 1000
+Vsense_R1 2 ns_R1 DC 0
+.op
+.end
+"""
+
+NET_VCVS = """压控压源
+V1 1 0 DC 10
+R1 1 2 1k
+R2 2 0 2k
+E1 3 0 2 0 3
+R3 3 0 1k
 .end
 """
 
@@ -583,8 +608,15 @@ def _run(cli: TestClient, td: str) -> int:
     eq("GET /api/symbols 状态码", r.status_code, 200)
     sy = r.json()
     ks = {s["kind"] for s in sy.get("symbols") or []}
-    check("★ 五种元件都在（ALLOWED_KINDS 全给到画布）",
-          ks == {"R", "V", "I", "C", "L"}, sorted(ks))
+    # ★ 这条别写死成 {"R","V","I","C","L"} —— 加了受控源之后它就是 9 种。
+    #   写死的话，每加一种元件都要来改测试，而真正该钉住的是
+    #   「画布拿到的 = IR 允许的」这个**等式**，不是某一次的快照。
+    check("★ 画布拿到的元件集 == IR 允许的元件集（ALLOWED_KINDS 一种不漏）",
+          ks == set(ALLOWED_KINDS), sorted(ks))
+    check("★ 四种受控源也在画布上（否则手绘场景画不了受控源）",
+          set(CONTROLLED_KINDS) <= ks, sorted(ks))
+    check("★ 位图通道那五种也在（画布与识图共用同一份符号）",
+          set(BITMAP_KINDS) <= ks, sorted(ks))
     check("每个元件都带本体半长 —— 画布要靠它把导线停在本体边缘",
           all(isinstance(s.get("body_half"), (int, float)) and s["body_half"] > 0
               for s in sy["symbols"]))
@@ -795,6 +827,231 @@ def _run(cli: TestClient, td: str) -> int:
           "ca-component" in seg and "data-ca-ref=" in seg and "data-ca-kind=" in seg)
     check("★ 值只在非空时才写 data-ca-value（写空串会让解析器报「解析不出来」）",
           'if (val ? ` data-ca-value' in seg or "val ?" in seg)
+
+    # ==================================================================
+    # 参数体系 / 受控源：名字 ↔ 绑定 ↔ 取值 这条链必须端到端通
+    # ==================================================================
+    banner("★ 元件定义带上'受控 / 独立 / 控制量 / 增益单位'（画布与参数页都要用）")
+    defs = {s["kind"]: s for s in sy["symbols"]}
+    for k, mode, gsym, out in (("E", "V", "μ", "V"), ("G", "V", "gm", "A"),
+                               ("H", "I", "rm", "V"), ("F", "I", "α", "A")):
+        d = defs.get(k) or {}
+        check(f"{k}：受控源，控制量 {mode}、增益符号 {gsym}、输出 {out}",
+              d.get("controlled") is True and d.get("independent") is False
+              and d.get("control_mode") == mode and d.get("gain_symbol") == gsym
+              and d.get("output") == out and d.get("detail"),
+              str({x: d.get(x) for x in ("controlled", "control_mode",
+                                         "gain_symbol", "output")}))
+    check("五种非受控元件都标成独立元件",
+          all((defs.get(k) or {}).get("controlled") is False
+              and (defs.get(k) or {}).get("independent") is True
+              for k in ("R", "V", "I", "C", "L")),
+          str({k: (defs.get(k) or {}).get("controlled") for k in "RVICL"}))
+    check("★ C/L 标成'不能参与直流求解'（界面要据此说明，而不是让它悄悄算出个错数）",
+          all((defs.get(k) or {}).get("dc_solvable") is False for k in ("C", "L"))
+          and all((defs.get(k) or {}).get("dc_solvable") is True
+                  for k in ("R", "V", "I", "E", "G", "H", "F")),
+          str({k: (defs.get(k) or {}).get("dc_solvable") for k in "RVICLEGHF"}))
+
+    banner("★ 受控源网表：0V 探针 + 语义标记 → 被采样支路必须回到题目那条")
+    # 这份网表是 to_spice 自己的输出格式：探针是**为了取电流自动插进去的**，
+    # 题目里说的是 R1。两者只靠 * ca-ctrl 那一行分得开 —— 分不开就会
+    # 把「被采样支路」显示成 Vsense_R1，用户以为题目里真有这个元件。
+    sid_c = _import_text(cli, NET_CTRL)
+    r = cli.get(f"/api/session/{sid_c}")
+    ir_c = r.json()["ir"]
+    h1 = [c for c in ir_c["components"] if c["ref"] == "H1"][0]
+    check("被采样支路按语义标记还原为题目里的 R1（不是探针）",
+          h1["ctrl"]["ref"] == "R1", str(h1["ctrl"]))
+    check("探针仍记为实际取电流的支路（求解走它）",
+          h1["ctrl"]["sense_ref"] == "Vsense_R1", str(h1["ctrl"]))
+    check("还原这件事在 origin_warnings / diagnostics 里有话说（不静默）",
+          any("还原" in w for w in (ir_c.get("origin") or {}).get("warnings") or [])
+          or any("还原" in str(d) for d in ir_c.get("diagnostics") or []),
+          str(((ir_c.get("origin") or {}).get("warnings") or [])[:2])[:150])
+
+    r = cli.post("/api/solve", json={"sid": sid_c})
+    eq("含受控源的网表：POST /api/solve 状态码", r.status_code, 200)
+    body = r.json()
+    check("含受控源的网表能解出来（ok = true）", body.get("ok") is True,
+          str(body.get("error"))[:120])
+    # ★ node_table 在 pack 里（/api/solve 的顶层是 ok/pack/params/…）
+    eqb = {row["node"]: row["exact"]
+           for row in (body.get("pack") or {}).get("node_table") or []}
+    check("V(2) = 5（手算：R1/R2 串联分压，探针是 0V 不动它）",
+          _fr(eqb.get("2")) == Fraction(5), str(eqb.get("2")))
+    check("V(3) = 10（手算：2000·i(R1) = 2000×5mA）",
+          _fr(eqb.get("3")) == Fraction(10), str(eqb.get("3")))
+    check("返回体带参数表（界面靠它渲染参数页）",
+          isinstance(body.get("params"), dict)
+          and body["params"].get("items"), "缺少 params")
+    check("参数表里标明了单位是 SI（界面表头直接用这句）",
+          "SI" in ((body.get("params") or {}).get("units") or {}).get("header", ""),
+          str(((body.get("params") or {}).get("units") or {}).get("header"))[:90])
+    pvb_c = body.get("param_values_by_binder") or {}
+    check("★ param_values_by_binder 的键与 params.by_binder 的键完全一致",
+          set(pvb_c) == set((body.get("params") or {}).get("by_binder") or {}),
+          f"只在解里 {sorted(set(pvb_c) - set((body['params'].get('by_binder') or {})))[:4]}；"
+          f"只在表里 {sorted(set((body['params'].get('by_binder') or {})) - set(pvb_c))[:4]}")
+    check("★ 按绑定取到的值就是解里的值（不是拿元件值冒充的）",
+          _fr(pvb_c.get("node_u:3")) == Fraction(10)
+          and _fr(pvb_c.get("branch_i:H1")) == Fraction(1, 100),
+          f"node_u:3={pvb_c.get('node_u:3')!r} branch_i:H1={pvb_c.get('branch_i:H1')!r}")
+    check("受控源在 params.controlled 里带控制方式与探针标记",
+          [c for c in (body["params"].get("controlled") or [])
+           if c["ref"] == "H1"][0].get("sampling_is_probe") is True,
+          str([c for c in (body["params"].get("controlled") or [])
+               if c["ref"] == "H1"])[:180])
+    check("★ 导出的网表里带着语义标记行（否则往返一次被采样支路就丢了）",
+          "* ca-ctrl H1 mode=I ref=R1 sense=Vsense_R1"
+          in (cli.get(f"/api/session/{sid_c}").json().get("netlist") or ""),
+          str([ln for ln in (cli.get(f"/api/session/{sid_c}").json()
+                             .get("netlist") or "").splitlines()
+               if "ca-ctrl" in ln]))
+    check("网表的人读注释里写的是题目支路 R1，并点明探针'不是题目元件'",
+          (lambda nl: "由 R1 支路的电流控制" in nl and "不是题目元件" in nl)(
+              cli.get(f"/api/session/{sid_c}").json().get("netlist") or ""),
+          str([ln for ln in (cli.get(f"/api/session/{sid_c}").json()
+                             .get("netlist") or "").splitlines()
+               if ln.startswith("* ↓")][:1])[:170])
+
+    banner("★ /api/params：改名保缓存、改方程清缓存、非法项整包不动")
+    sid_v = _import_text(cli, NET_VCVS)
+    r = cli.post("/api/solve", json={"sid": sid_v})
+    check("压控压源基线可解，V(3) = 3·V(2) = 20",
+          _fr({row["node"]: row["exact"]
+               for row in (r.json().get("pack") or {}).get("node_table") or []}
+              .get("3")) == Fraction(20),
+          str({row["node"]: row["exact"]
+               for row in (r.json().get("pack") or {}).get("node_table") or []}))
+    base = r.json()
+    keys0 = set(base.get("param_values_by_binder") or {})
+    check("基线缓存非空（否则下面两条'保/清'的断言就是空的）", bool(keys0),
+          f"键 {len(keys0)} 个")
+
+    # ---- ① 只改名：电路一条方程都没变，缓存必须留着
+    r = cli.post("/api/params", json={"sid": sid_v, "renames": {"u_2": "uA"}})
+    eq("POST /api/params（只改名）状态码", r.status_code, 200)
+    b1 = r.json()
+    check("只改名：ok = true", b1.get("ok") is True, str(b1.get("error"))[:110])
+    check("改名后参数表里是新名字、旧名字没了",
+          "uA" in (b1["params"]["by_binder"] or {}).values()
+          and "u_2" not in (b1["params"]["by_binder"] or {}).values(),
+          str(sorted((b1["params"]["by_binder"] or {}).values())[:6]))
+    check("★ 只改名时**保留**上一次求解的取值（改名不改数，否则用户改个名就看不着数了）",
+          set(b1.get("param_values_by_binder") or {}) == keys0,
+          f"{len(b1.get('param_values_by_binder') or {})} vs {len(keys0)}")
+    check("改过名的参数在表里标成'用户命名'（auto=false）",
+          any(e["symbol"] == "uA" and e["auto"] is False
+              for e in b1["params"]["items"]), "")
+
+    # ---- ② 改表达式：解会变，旧的一批数当场作废
+    r = cli.post("/api/params", json={"sid": sid_v, "exprs": {"E1": "3*uA + 5"}})
+    b2 = r.json()
+    check("填受控源表达式：ok = true", b2.get("ok") is True,
+          str(b2.get("error"))[:110])
+    check("★ 改表达式时**清空**上一次求解的取值（拿旧数配新方程最危险）",
+          not (b2.get("param_values_by_binder") or {}),
+          f"还剩 {len(b2.get('param_values_by_binder') or {})} 项")
+    r = cli.post("/api/solve", json={"sid": sid_v})
+    b3 = r.json()
+    check("改完表达式再求解：V(3) = 3·V(2) + 5 = 25（表达式真被用上了）",
+          _fr({row["node"]: row["exact"]
+               for row in (b3.get("pack") or {}).get("node_table") or []}
+              .get("3")) == Fraction(25),
+          str({row["node"]: row["exact"]
+               for row in (b3.get("pack") or {}).get("node_table") or []}))
+    check("★ 改名连带改写了表达式里的符号（否则表达式就指向空气）",
+          "uA" in (b3["ir"]["components"][3].get("ctrl") or {}).get("expr", ""),
+          str((b3["ir"]["components"][3].get("ctrl") or {}).get("expr")))
+
+    # ---- ③ 非法项：整包不动（改名也不许生效）
+    r = cli.post("/api/params", json={
+        "sid": sid_v, "renames": {"uA": "zz"},
+        "ctrls": {"E1": {"nodes": ["2", "99"]}}})
+    eq("非法控制端：仍然 200（这是输入问题、请用户改，不是服务端故障）",
+       r.status_code, 200)
+    b4 = r.json()
+    check("非法控制端：ok = false 且给出可读原因",
+          b4.get("ok") is False and "不在电路里" in (b4.get("error") or ""),
+          str(b4.get("error"))[:110])
+    # ★ 失败响应里**没有** params 字段（那是"输入有问题"的最小回包）。
+    #   要核对"改名到底生效没有"，必须回读会话 —— 界面也是这么做的。
+    syms4 = set((cli.get(f"/api/session/{sid_v}").json()
+                 ["params"]["by_binder"] or {}).values())
+    check("★ 整包被拒后，同一包里的改名**没有生效**（要么全成、要么原样）",
+          "uA" in syms4 and "zz" not in syms4, str(sorted(syms4)[:8]))
+    r = cli.post("/api/solve", json={"sid": sid_v})
+    check("整包被拒后电路仍可解（没被半程状态搞坏）",
+          r.json().get("ok") is True, str(r.json().get("error"))[:110])
+
+    # ---- ④ 先回到标准形（把上一步填的表达式清掉），再改控制端看解变不变
+    r = cli.post("/api/params", json={"sid": sid_v, "exprs": {"E1": ""}})
+    check("清空表达式 = 回到增益的标准形（E1 的增益 3 还在，所以合法）",
+          r.json().get("ok") is True
+          and (r.json().get("exprs") or [{}])[0].get("mode") == "标准形（增益）",
+          str(r.json().get("exprs")) or str(r.json().get("error"))[:100])
+    r = cli.post("/api/solve", json={"sid": sid_v})
+    nt = {row["node"]: row["exact"]
+          for row in (r.json().get("pack") or {}).get("node_table") or []}
+    check("回到标准形后 V(3) = 3·V(2) = 20", _fr(nt.get("3")) == Fraction(20), str(nt))
+
+    # ---- ⑤ 合法改控制端：解必须跟着变
+    r = cli.post("/api/params", json={"sid": sid_v,
+                                      "ctrls": {"E1": {"nodes": ["1", "0"]}}})
+    b5 = r.json()
+    check("改控制端：ok = true 且报出新控制关系",
+          b5.get("ok") is True and (b5.get("ctrls") or [{}])[0].get("nodes") == ["1", "0"],
+          str(b5.get("ctrls")))
+    check("★ 改控制关系同样清空缓存（控制端变了、方程就变了）",
+          not (b5.get("param_values_by_binder") or {}), "")
+    r = cli.post("/api/solve", json={"sid": sid_v})
+    nt = {row["node"]: row["exact"]
+          for row in (r.json().get("pack") or {}).get("node_table") or []}
+    check("改控制端后 V(3) = 3·V(1) = 30（改的是被求解的那一份，不是显示层）",
+          _fr(nt.get("3")) == Fraction(30), str(nt))
+
+    banner("★ 被跳过的元件必须结构化报到界面上（回导丢件不许静默）")
+    # ★ 这里钉的是「**丢了要说**」，不是「不许丢」：
+    #   自动版式对并联支路会把两条排在同一轴线上（E1 与 R3 都是 3-0），
+    #   回导时两个符号叠在一起、两端被判成同一个结点，于是一起消失。
+    #   那是**版式层**的缺陷（另案），但无论修不修，
+    #   用户在界面上都必须看到"这两个元件没建起来、为什么"。
+    r = cli.post("/api/render", json={"sid": sid_v, "mode": "auto"})
+    rj = r.json()
+    # ★ /api/render 把版式自检结果**摊在顶层**（{"ok":…, "svg":…, **dg}），
+    #   没有嵌套的 diagnostics —— 断言要按真实形状写，不能凭印象。
+    check("自动版式对被排在同一轴线的并联支路会报 overlaps（版式自检生效）",
+          isinstance(rj.get("overlaps"), list) and len(rj["overlaps"]) > 0,
+          str(rj.get("overlaps"))[:140])
+    check("★ 有重叠就标 roundtrip_safe=False（该插图不能拿去几何回导）",
+          rj.get("roundtrip_safe") is False,
+          f"roundtrip_safe={rj.get('roundtrip_safe')!r} layout={rj.get('layout')!r}")
+    svg_bad = rj.get("svg") or ""
+    r = cli.post("/api/from-svg", json={"svg": svg_bad, "name": "重叠回导",
+                                        "new_session": True})
+    b6 = r.json()
+    check("叠图回导：端点不返回 5xx", r.status_code == 200, r.status_code)
+    sk = b6.get("skipped_components")
+    check("★ skipped_components 是**结构化**列表（不是一句笼统的警告）",
+          isinstance(sk, list) and len(sk) > 0
+          and all({"ref", "why", "detail"} <= set(x) for x in sk),
+          str(sk)[:180])
+    check("★ 每一条都点名位号 + 机器可读原因 + 人读细节",
+          all(x["ref"] and x["why"] and x["detail"] for x in sk)
+          and {"E1", "R3"} <= {x["ref"] for x in sk},
+          str(sk)[:180])
+    check("原因如实说是'短路'（两端落进同一个结点）",
+          all(x["why"] == "short_circuit" for x in sk if x["ref"] in ("E1", "R3")),
+          str([(x["ref"], x["why"]) for x in sk]))
+    ow = " ".join(b6.get("origin_warnings") or []) + " ".join(b6.get("warnings") or [])
+    check("★ 文字上也说清了后果（'这几条支路就是缺了，不是被偷偷补上'）",
+          "缺" in ow or "跳过" in ow or "没" in ow, ow[:170])
+    # 干净通道：没有跳过时必须是空列表，而不是字段缺失
+    r = cli.post("/api/from-spice", json={"text": NET_PURE_RV})
+    check("没有跳过的会话里 skipped_components 是空列表（字段一直在）",
+          r.json().get("skipped_components") == [],
+          str(r.json().get("skipped_components")))
 
     banner("其余端点冒烟")
     r = cli.get(f"/api/session/{sid_l}")

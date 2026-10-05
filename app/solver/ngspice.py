@@ -25,9 +25,15 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
-from ..ir.model import Circuit, CircuitError
+from ..ir.model import Circuit, CircuitError, GAIN_SYMBOL
+from ..ir.spice_expr import spice_expression, spice_gain_value
 from ..paths import bundled_ngspice
 from .base import Solution, declared_direction
+# ★ 探针源与表达式两条设施**必须与另外两条路径共用同一份实现**。
+#   在这里自己再写一遍"给 H/F 找哪条支路的电流"，就等于给了三法三个
+#   不同的电路 —— 一旦对不上，分不清是求解器有别还是喂进去的东西有别，
+#   而"三法互校"这个判据本身就废了。
+from .controlled import ensure_sense_sources
 
 
 # ---------------------------------------------------------------- 定位 DLL
@@ -266,6 +272,13 @@ def _solve_locked(circuit: Circuit) -> Solution:
 
     NgSpiceShared.LIBRARY_PATH = str(dll)
 
+    # ---- ★ 电流控制型（H/F）受控源：先补 0V 探针源，再搭网表。
+    #   SPICE 的 H/F 卡只能引用**电压源**的电流，教科书却常写"受 R1 上的电流控制"；
+    #   在 R1 支路串一个 0V 源即可取到同一个电流，电学行为不变。
+    #   与 mna/branch 走的是同一个 ``ensure_sense_sources``，且它返回副本、
+    #   不改调用方的电路 —— 插进来的元件会挪动端子，写回会话就会让界面接线全错。
+    circuit, sense = ensure_sense_sources(circuit)
+
     warnings: list[str] = []
     pc = PCircuit(circuit.name or "circuit")
 
@@ -290,17 +303,85 @@ def _solve_locked(circuit: Circuit) -> Solution:
             body = body[1:]
         return body or c.ref
 
+    def netname(c) -> str:
+        """这条支路在**网表里**的器件名（读电流、写表达式都要用它）。
+
+        * 常规元件：``kind + dev(c)`` —— 与 PySpice 自己拼出来的一致
+          （``R1`` 剥成 ``1`` 再被补回 ``R``，还是 ``R1``）；
+        * **用了自定义表达式的受控源**：它写成行为源 ``B…``，
+          器件名会变成 ``B`` + 位号 —— 与 IR 位号不同，必须能映射回来。
+        """
+        if c.is_controlled and c.ctrl is not None and c.ctrl.expr:
+            return "B" + c.ref
+        return c.kind + dev(c)
+
     for c in circuit.components:
         a, b = nm(c.nodes[0]), nm(c.nodes[1])
-        v = float(c.value)
+        v = float(c.value) if c.value is not None else None
         if c.kind == "R":
-            if v <= 0:
+            if v is None or v <= 0:
                 raise CircuitError(f"{c.ref}: ngspice 不接受非正电阻 {v}")
             pc.R(dev(c), a, b, v)
         elif c.kind == "V":
+            if v is None:
+                raise CircuitError(f"{c.ref}: 电压源缺数值")
             pc.V(dev(c), a, b, v)
         elif c.kind == "I":
+            if v is None:
+                raise CircuitError(f"{c.ref}: 电流源缺数值")
             pc.I(dev(c), a, b, v)
+
+        elif c.is_controlled:
+            ctrl = c.ctrl
+            assert ctrl is not None                      # Component 已保证
+            if ctrl.expr:
+                # ---- 自定义表达式：写成行为源 B。
+                #   ★ 为什么不用 `E1 a b VALUE = {…}`：实测只有 E 卡认这个写法，
+                #   G/H/F 不认；而 B 源四类都能覆盖，且行为语义最明确。
+                #   代价是器件名变成 B<位号>（由 netname() 负责映射回来）。
+                lin = circuit.params.resolve_expression(ctrl.expr)
+                expr_text = spice_expression(lin, circuit, netname=netname)
+                if c.outputs_voltage:
+                    pc.BehavioralSource(c.ref, a, b, voltage_expression=expr_text)
+                else:
+                    pc.BehavioralSource(c.ref, a, b, current_expression=expr_text)
+                continue
+
+            if v is None:
+                raise CircuitError(
+                    f"{c.ref}: 受控源缺少增益（{GAIN_SYMBOL.get(c.kind, '')}）"
+                    "，也没有自定义表达式")
+            if ctrl.mode == "V":
+                assert ctrl.nodes is not None
+                cx, cy = nm(ctrl.nodes[0]), nm(ctrl.nodes[1])
+                if c.kind == "E":
+                    pc.VCVS(dev(c), a, b, cx, cy, v)
+                else:
+                    pc.VCCS(dev(c), a, b, cx, cy, v)
+            else:
+                # 电流控制型：SPICE 的 H/F 卡只能引用**电压源**的器件名。
+                # ensure_sense_sources 已经保证了采样支路是电压输出元件。
+                sense_c = circuit.by_ref(ctrl.sampling)
+                if not sense_c.outputs_voltage:
+                    raise CircuitError(
+                        f"{c.ref}: 采样支路 {ctrl.sampling} 不是电压输出元件，"
+                        "SPICE 的 H/F 卡取不到它的电流（探针源应当已经插好，"
+                        "这是内部一致性错误）")
+                sn = netname(sense_c)
+                # ★★ H/F 卡的增益必须做一次 IR→SPICE 的约定换算，**不是笔误**。
+                #   原因与实现全在 :data:`app.ir.spice_expr.SPICE_SOURCE_CURRENT_SIGN`
+                #   一处定义里：IR 的电源电流"i>0 = 供电"，SPICE 的 I(Vx) 正好相反，
+                #   而 H/F 卡取的就是后者。
+                #   实测：不换算时 ngspice 给出 V(3) = −10 V，而节点电压法与
+                #   支路电流法都给出 +10 V —— 三法一致地只差这一个负号。
+                #   网表层写同一个量时走的是同一个函数（``spice_gain_text``），
+                #   两处共用一份约定，不各写一个负号。
+                card_gain = spice_gain_value(v)
+                if c.kind == "H":
+                    pc.CCVS(dev(c), a, b, sn, card_gain)
+                else:
+                    pc.CCCS(dev(c), a, b, sn, card_gain)
+
         else:
             raise CircuitError(f"{c.ref}: ngspice 路径暂不支持 {c.kind}")
 
@@ -340,20 +421,23 @@ def _solve_locked(circuit: Circuit) -> Solution:
             val = float("nan")
         node_v[n] = val
 
-    # ---- 支路电流：ngspice 的 .op 只给节点电压和电压源电流。电阻电流由
-    # node voltage 反算 —— 节点电压仍来自 ngspice 的独立求解器，所以代码路径没变味。
+    # ---- 支路电流：ngspice 的 .op 只给节点电压和**电压输出元件**的电流。
+    # 电阻电流由 node voltage 反算 —— 节点电压仍来自 ngspice 的独立求解器，
+    # 所以代码路径没变味。
     currents: dict[str, float] = {}
     drops: dict[str, float] = {}
     for c in circuit.components:
         f, t = declared_direction(c)
         d = node_v.get(f, float("nan")) - node_v.get(t, float("nan"))
         drops[c.ref] = d
-        if c.kind == "V":
-            # 实测：PySpice 把电压源支路电流挂在 op['v1'] 这种**器件名小写**键上
-            # （`op.branches` 里就是它），不是 'i(v1)'。两种写法都试一遍更稳。
-            iv = read(f"i({c.ref})")
+        if c.outputs_voltage:
+            # 实测：PySpice 把电压源/受控源的支路电流挂在 op['v1'] 这种
+            # **器件名小写**键上（`op.branches` 里就是它），不是 'i(v1)'。
+            # 两种写法都试一遍更稳。受控源用 I(E1) 同样可用（实测过）。
+            dev_name = netname(c)
+            iv = read(f"i({dev_name})")
             if iv is None:
-                iv = read(c.ref.lower())
+                iv = read(dev_name.lower())
             if iv is None:
                 # 电压源电流也能由该源 + 端所在节点的 KCL 反推，但那样就不独立了，
                 # 这里宁可留 NaN 让对账表显式暴露缺失
@@ -361,12 +445,44 @@ def _solve_locked(circuit: Circuit) -> Solution:
                 currents[c.ref] = float("nan")
             else:
                 # SPICE 的 i(Vx) 定义是"流入 + 端的电流"（+ -> − 穿过源内部），
-                # 而 IR 的电压源参考方向是"内部 − -> +"，两者符号相反。
+                # 而 IR 的电压输出元件参考方向是"内部 − -> +"，两者符号相反。
                 currents[c.ref] = -float(iv)
         elif c.kind == "R":
             currents[c.ref] = d / float(c.value)
-        else:
+        elif c.kind == "I":
             currents[c.ref] = float(c.value)
+        # G/F 的电流 ngspice 不给（它们不是电压源），下面统一按控制关系回代
+
+    # ---- ★ 电流型受控源的电流必须由我们按控制关系回代。
+    #   漏了这一步，它们在功率表与 KCL 校验里就是 0 —— 而功率"守恒"
+    #   反而更容易成立（少算了这部分），于是看起来一切正常。属于典型的静默缺值。
+    if circuit.controlled:
+        from .controlled import resolve_controlled_currents
+        done = resolve_controlled_currents(circuit, node_v, currents)
+        for ref in done:
+            if currents.get(ref) is not None:
+                currents[ref] = float(currents[ref])
+        for c in circuit.controlled:
+            if c.kind in ("G", "F") and c.ref not in currents:
+                warnings.append(f"ngspice 路径未能定出 {c.ref} 的电流")
+                currents[c.ref] = float("nan")
+
+    detail: dict[str, Any] = {
+        "dll": str(dll),
+        "note": "PySpice 可能提示 'Unsupported Ngspice version 46'，"
+                "那只是版本枚举认不出，不影响 .op 取值",
+    }
+    if sense.get("inserted"):
+        detail["sense_probes"] = sense["inserted"]
+    if circuit.controlled:
+        detail["controlled"] = [
+            {"ref": c.ref, "kind": c.kind, "control": c.control_text(),
+             "mode": "自定义表达式" if (c.ctrl and c.ctrl.expr) else "标准形",
+             "netname": netname(c),
+             "i": str(currents.get(c.ref, "")),
+             "u": str(drops.get(c.ref, ""))}
+            for c in circuit.controlled
+        ]
 
     return Solution(
         method="ngspice(第三方共享库浮点求解)",
@@ -374,10 +490,6 @@ def _solve_locked(circuit: Circuit) -> Solution:
         branch_currents=currents,
         branch_drops=drops,
         exact=False,
-        detail={
-            "dll": str(dll),
-            "note": "PySpice 可能提示 'Unsupported Ngspice version 46'，"
-                    "那只是版本枚举认不出，不影响 .op 取值",
-        },
+        detail=detail,
         warnings=warnings,
     )

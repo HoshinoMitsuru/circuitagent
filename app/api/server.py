@@ -30,9 +30,12 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from ..ingest.kicad_in import kicad_netlist_text_to_ir, kicad_sch_to_ir
 from ..ingest.svg_in import svg_to_ir
-from ..ir.model import ALLOWED_KINDS, CONFIDENCE_GATE, Circuit, CircuitError
-from ..ir.render import (BODY_HALF, GLYPHS, KIND_LABEL, KIND_UNIT, layout_auto,
-                         layout_geom, layout_grid, layout_overlaps,
+from ..ir.model import (ALLOWED_KINDS, BITMAP_KINDS, CONFIDENCE_GATE, Circuit,
+                        CircuitError, CONTROLLED_KINDS, CURRENT_OUTPUT_KINDS,
+                        SOLVABLE_KINDS, VOLTAGE_OUTPUT_KINDS)
+from ..ir.params import CONTROL_MODE, GAIN_SYMBOL, apply_param_edits, params_view
+from ..ir.render import (BODY_HALF, GLYPHS, KIND_DETAIL, KIND_LABEL, KIND_UNIT,
+                         layout_auto, layout_geom, layout_grid, layout_overlaps,
                          layout_radial, render_overlay_payload, render_svg,
                          style_block)
 from ..ir.spice import canonical_netlist_view, from_spice, to_spice
@@ -91,6 +94,31 @@ class Session:
     viewbox: tuple[float, float, float, float] | None = None
     ir: Circuit | None = None
     report: dict[str, Any] = field(default_factory=dict)
+    #: ★ 上一次求解算出来的**参数取值**，按**绑定**索引（``"branch_i:R1" -> "1/20"``）。
+    #:   存绑定而不是存参数名，是因为用户随时能改名，而改名会让按名索引的表当场失效
+    #:   —— 界面上就会冒出"这个参数还没有取值"，可电路没变、解也没变，那
+    #:   是**假信息**。绑定不随改名而变，所以改完名这张表照样有效。
+    #:   反过来说：**任何会改变解的编辑都必须清掉它**（改元件值、改表达式…），
+    #:   否则界面会拿旧的数配新的电路 —— 那才是真的错位。见 api_put_ir / api_params。
+    pv_binder: dict[str, Any] = field(default_factory=dict)
+    pv_binder_float: dict[str, Any] = field(default_factory=dict)
+
+    def put_ir(self, circ: Circuit | None) -> None:
+        """换掉会话里的电路，并**同步作废上一次求解算出的参数取值**。
+
+        ★ 为什么必须走这个函数、不许直接写 ``sess.ir = ...``：
+        屏上的参数取值来自上一次求解，一旦电路变了，那批数就对不上新电路了 ——
+        界面上会拿**旧的数**去配**新的图**（改了 R1 的阻值，`u_3` 还显示改之前的值），
+        而它长得和正确结果一模一样，用户根本发现不了。这种错位比"不显示"危险得多。
+        所以只要电路一换，缓存一律清掉，界面回到"—"，等人重新求解。
+
+        唯一的例外是**只改参数名**（``/api/params`` 且没改表达式）：那种修改
+        不改变任何量的数值，所以它**不经过这里**，走的是原地改名，缓存得以保留
+        —— 否则用户改个名字就得重算一遍才能再看数。
+        """
+        self.ir = circ
+        self.pv_binder = {}
+        self.pv_binder_float = {}
     #: 位图通道那一路的完整结论（两级各自跑到哪、为什么升级、模型原始返回）
     vision: dict[str, Any] | None = None
     #: ★ 上面那个是**给 JSON 用的字典**；叠图要的是真对象（线段、结点、
@@ -174,7 +202,7 @@ def _import_file(sess: Session, *, tol: float, ref_node: str | None,
         circ, report = _import_bitmap(sess, cfg=vision_cfg)
     else:
         raise CircuitError(f"不认识的通道 {sess.channel!r}。")
-    sess.ir = circ
+    sess.put_ir(circ)
     sess.report = report
     vb = (report or {}).get("viewbox")
     if vb:
@@ -303,7 +331,7 @@ def _vision_apply_to_session(sess: Session) -> None:
     """重算之后，把新网表装回会话（和 ``_import_file`` 装的方式保持一致）。"""
     out = sess.vision_obj
     circ = getattr(out, "circuit", None) if out is not None else None
-    sess.ir = circ
+    sess.put_ir(circ)
     if circ is not None:
         circ.origin = {
             "channel": f"bitmap-{getattr(out, 'tier', 'local')}",
@@ -349,6 +377,21 @@ def _bitmap_preview(sess: Session) -> dict[str, Any] | None:
     return pv
 
 
+def _skipped_of(circ: Circuit) -> list[dict[str, Any]]:
+    """解析过程中**被跳过**的元件（位号 / 原因 / 细节）。
+
+    两级来源都要看：几何槽位那一级和语义标记那一级会各自记录，
+    只看一级就会漏 —— 而漏掉的后果是"图上少了个元件却没有任何提示"。
+    """
+    geo = ((circ.origin or {}).get("geometry_report") or {})
+    out: list[dict[str, Any]] = []
+    for s in (geo.get("skipped_components") or []):
+        out.append({"ref": str(s.get("ref") or "?"),
+                    "why": str(s.get("why") or ""),
+                    "detail": str(s.get("detail") or "")})
+    return out
+
+
 def _ir_payload(sess: Session) -> dict[str, Any]:
     """把一个会话整理成前端能直接渲染的一整包。"""
     assert sess.ir is not None
@@ -362,7 +405,17 @@ def _ir_payload(sess: Session) -> dict[str, Any]:
     out: dict[str, Any] = {
         "session": sess.to_dict(),
         "ir": circ.to_dict(),
+        "params": params_view(circ),
+        # 参数取值按绑定索引（见 Session.pv_binder 的注释）。没有解就是空字典 ——
+        # 界面据此显示"—"，而不是拿元件值冒充"电流/电压的取值"。
+        "param_values_by_binder": dict(sess.pv_binder),
+        "param_values_by_binder_float": dict(sess.pv_binder_float),
         "needs_human": circ.unmet_needs(),
+        # ★ 解析时**没能建起来**的元件。必须单独送到界面上：
+        #   它们不在网表里，于是算出来的是"比原图少几条支路"的电路的答案，
+        #   而三法互校、功率守恒**全都拦不住**（三条路径共用同一份残缺的 IR）。
+        #   结构化给出去，界面才能指着位号说"这两个元件没建起来、为什么"。
+        "skipped_components": _skipped_of(circ),
         "confidence_gate": CONFIDENCE_GATE,
         "report": sess.report,
         "warnings": warnings,
@@ -738,12 +791,63 @@ async def api_put_ir(payload: dict[str, Any]) -> dict[str, Any]:
     sid = payload.get("sid") or ""
     sess = _get(sid)
     try:
-        sess.ir = Circuit.from_dict(payload["ir"])
+        sess.put_ir(Circuit.from_dict(payload["ir"]))
     except Exception as e:
         raise HTTPException(400, f"IR 无法解析：{type(e).__name__}: {e}") from None
     body = _ir_payload(sess)
     body["ok"] = True
     return body
+
+
+@app.post("/api/params")
+def api_params(payload: dict[str, Any]) -> JSONResponse:
+    """改**参数名**与**受控源控制表达式**。
+
+    ★ 失败时**绝不写下任何一半**：``apply_param_edits`` 全程在副本上做，
+    成功才写回会话。所以这里的失败分支要么返回错误、要么整包生效 ——
+    不存在"界面上显示新名字、后台还是旧名字"这种错位。
+    这也是为什么它在出错时返回 200 + ``ok:false``：那是**输入有问题、
+    请用户改**，不是服务端故障；前端要拿到原文提示，而不是一个"请求失败"。
+
+    请求体：``{"sid": …, "renames": {"旧名": "新名"}, "exprs": {"E1": "3*u_2"}}``
+    （``exprs`` 里给空串 = 取消自定义表达式，回到用增益的标准形）。
+
+    ★ **改名与改表达式对缓存取值的处理不一样，这个区别很要紧**：
+      * 只改名 —— 电路一条方程都没变，**数值一个都没变**，所以缓存留着，
+        用户改完名还能继续看到同一批数；
+      * 改表达式 —— 受控源的输出方程变了，**解会变**，旧的那批数当场作废。
+        若留着，界面就会拿旧解的数去配新的方程，而那和正确答案长得一模一样。
+    """
+    sid = payload.get("sid") or ""
+    sess = _get(sid)
+    if sess.ir is None:
+        return JSONResponse(status_code=200, content={
+            "ok": False, "stage": "params", "error": "这个会话里还没有电路"})
+    exprs = payload.get("exprs") or {}
+    ctrls = payload.get("ctrls") or {}
+    try:
+        result = apply_param_edits(
+            sess.ir,
+            renames=payload.get("renames") or {},
+            exprs=exprs,
+            ctrls=ctrls,
+        )
+    except CircuitError as e:
+        return JSONResponse(status_code=200, content={
+            "ok": False, "stage": "params", "error": str(e)})
+    except Exception as e:                     # pragma: no cover
+        return JSONResponse(status_code=200, content={
+            "ok": False, "stage": "params",
+            "error": f"{type(e).__name__}: {e}"})
+
+    if exprs or ctrls:
+        # 方程变了 → 旧的解不再成立。这一句必须在这里，不能靠前端记得清。
+        sess.pv_binder = {}
+        sess.pv_binder_float = {}
+
+    body = _ir_payload(sess)
+    body.update({"ok": True, **result})
+    return JSONResponse(content=body)
 
 
 @app.post("/api/solve")
@@ -752,7 +856,7 @@ async def api_solve(payload: dict[str, Any]) -> JSONResponse:
     sess = _get(sid)
     if "ir" in payload:
         try:
-            sess.ir = Circuit.from_dict(payload["ir"])
+            sess.put_ir(Circuit.from_dict(payload["ir"]))
         except Exception as e:
             return JSONResponse(status_code=200, content={
                 "ok": False, "error": f"IR 无法解析：{type(e).__name__}: {e}"})
@@ -769,6 +873,12 @@ async def api_solve(payload: dict[str, Any]) -> JSONResponse:
         return JSONResponse(status_code=200, content={
             "ok": False, "stage": "solve",
             "error": f"{type(e).__name__}: {e}"})
+
+    # ---- 把这一遍的参数取值缓存进会话。
+    # 缓存的是**绑定**那份（见 Session.pv_binder）：它不随改名而失效，
+    # 所以用户改完参数名不必重算就能继续看到同一批数。
+    sess.pv_binder = pack.get("param_values_by_binder") or {}
+    sess.pv_binder_float = pack.get("param_values_by_binder_float") or {}
 
     # ---- 文本报告是**派生视图**，不是解本身。
     # 它曾经因为用原电路的节点/位号去查化简后的对账表而抛 StopIteration，
@@ -791,6 +901,13 @@ async def api_solve(payload: dict[str, Any]) -> JSONResponse:
         "text_report_error": text_report_error,
         "ir": sess.ir.to_dict(),
         "unmet": sess.ir.unmet_needs(),
+        # 这一遍算出来的参数取值，连同会话一起缓存 —— 之后改名/重开界面
+        # 都还能读到**同一批数**，不必为了看个数再解一次。
+        # 注意 `run_all` 里这两张表已经是**字符串/浮点**，可以直接进 JSON
+        # （Fraction 塞进 JSONResponse 会抛，而那句一旦不在 try 里就是 500）。
+        "params": pack.get("params"),
+        "param_values_by_binder": pack.get("param_values_by_binder") or {},
+        "param_values_by_binder_float": pack.get("param_values_by_binder_float") or {},
     })
 
 
@@ -835,7 +952,7 @@ def api_from_spice(payload: dict[str, Any]) -> JSONResponse:
     (d / "source.cir").write_text(text, encoding="utf-8")
     sess = Session(sid=sid, filename="手工网表", ext=".cir", channel="netlist",
                    source_path=d / "source.cir")
-    sess.ir = circ
+    sess.put_ir(circ)
     sess.report = {"component_source": "spice_text",
                    "note": "来自手工粘贴的 SPICE 网表，拓扑与取值按字面采信（source=exact）。"}
     _SESSIONS[sid] = sess
@@ -924,6 +1041,21 @@ def api_symbols() -> JSONResponse:
         "unit": KIND_UNIT.get(k, ""),
         "glyph": GLYPHS[k](),
         "body_half": BODY_HALF.get(k, 15.0),
+        # ★ 下面这几个字段是给**参数页与结构确认页**用的，一并在这里给出去。
+        #   理由和上面一样：前端一旦自己写一份「E 是压控压源、增益叫 μ、单位 V/V」，
+        #   后端改了标签它不会跟着改，于是同一个元件在调色板上叫一个名、
+        #   在确认表里叫另一个名，在报告里又是第三个 —— 这正是"信息错位"。
+        #   所以**凡是能算出来的，就别让前端写死**。
+        "controlled": k in CONTROLLED_KINDS,
+        "control_mode": CONTROL_MODE.get(k, ""),          # 控制量：V / I / ""（非受控）
+        "gain_symbol": GAIN_SYMBOL.get(k, ""),            # μ / gm / rm / α
+        # 输出量：受控/独立源才谈得上"输出什么"。R/C/L 既不是压源也不是流源 ——
+        # 给它们填 "A" 会让界面把它们显示成"输出电流"，那是纯粹的误导。
+        "output": ("V" if k in VOLTAGE_OUTPUT_KINDS
+                   else ("A" if k in CURRENT_OUTPUT_KINDS else "")),
+        "detail": KIND_DETAIL.get(k, ""),
+        "independent": k in BITMAP_KINDS,   # 位图通道认得的只有这几种
+        "dc_solvable": k in SOLVABLE_KINDS,  # 直流稳态三法能不能直接解
     } for k in sorted(kinds)]
     return JSONResponse(content={
         "ok": True,
@@ -1032,7 +1164,7 @@ def api_from_svg(payload: dict[str, Any]) -> JSONResponse:
             "hand_svg": "hand.svg",
             "edit_count": int((prev_he or {}).get("edit_count") or 0) + 1,
         }
-        sess.ir = circ
+        sess.put_ir(circ)
         sess.report = report
         sess.source_path = hand
         sess.channel = "svg"
@@ -1053,7 +1185,7 @@ def api_from_svg(payload: dict[str, Any]) -> JSONResponse:
     (d / "source.svg").write_text(svg, encoding="utf-8")
     sess = Session(sid=sid, filename=name, ext=".svg", channel="svg",
                    source_path=d / "source.svg")
-    sess.ir = circ
+    sess.put_ir(circ)
     sess.report = report
     if report.get("viewbox"):
         sess.viewbox = tuple(float(v) for v in report["viewbox"])

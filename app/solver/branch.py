@@ -1,6 +1,6 @@
 """支路电流法（独立复算路径）。
 
-未知量 = **全部支路电流**（电流源的电流已知，所以改用它的电压作未知量）；
+未知量 = **全部支路电流**（电流源/电流型受控源的电流不自由，所以改用它的电压作未知量）；
 方程 = (n−1) 条结点 KCL + **基本回路** KVL。
 
 基本回路从**生成树**导出：每条非树边（弦）对应恰好一个回路，
@@ -16,6 +16,25 @@
 方程是**回路 KVL** 而不是电压源约束行，矩阵的维度、稀疏结构、奇异条件
 全都不一样。两者的共性错误（比如同一处符号约定写反）概率远低于
 "同一份代码跑两遍"。
+
+## 受控源在这里怎么进方程
+
+受控源的量要么含"节点电压差"、要么含"别处支路电流"，两者都不是本方法的
+未知量，**必须换基底**。做法是把每一个量都表示成**未知量列的线性组合**：
+
+* 支路压降 ``drop_c`` 与支路电流 ``i_c`` 各有一个"系数表 + 常数"的表达式；
+* **节点电压差 ``V_x − V_y``** 沿生成树的**唯一路径**累加压降即可
+  （树路径唯一，所以这个表示是确定的，不依赖挑哪条回路）；
+* 受控源的控制量、以及电压型受控源给出的压降 ``−控制量``，
+  都在这个基底上展开。
+
+★ 关键在于：**这些系数表在求解之前就完全确定**（它们只是"未知量的线性
+组合"，与未知量的取值无关）。所以解出 ``sol_vec`` 之后直接代入即可 ——
+不需要"先知道节点电压才能算受控源压降"这种循环。整个流程单向，没有不动点迭代。
+
+★★ 展开深度有上限（``MAX_EXPR_DEPTH``）。受控源互相控制、或控制量绕回自己，
+会构成代数环；超过深度就**明确报错**，而不是让递归撞上 Python 的栈上限
+（那时用户看到的是 RecursionError，完全指不到真正的问题）。
 """
 
 from __future__ import annotations
@@ -23,8 +42,11 @@ from __future__ import annotations
 from fractions import Fraction
 
 from ..ir.model import Circuit, CircuitError
+from ..ir.params import LinearExpr
 from .base import (Solution, declared_direction,
                    build_node_voltages_from_drops, reject_non_dc)
+from .controlled import ensure_sense_sources
+from ..ir.params import MAX_EXPR_DEPTH
 from .linalg import solve_linear, to_frac
 
 
@@ -151,16 +173,163 @@ def _declared_drop(c, val: Fraction) -> Fraction | None:
     所以沿参考方向的压降是 ``V_− − V_+ = −E``。
     电阻的压降是 ``R·i``（随电流变），电流源的压降本身是未知量 —— 两者都返回 None。
 
-    ★ 这个函数是"电压源压降符号"的**唯一出口**。KVL 回路方程与由电流反推压降
+    ★ 这个函数是"**独立电压源**压降符号"的唯一出口。KVL 回路方程与由电流反推压降
     两处都调它，就不会出现"两处各写一遍、其中一处写反"的事故。
+    （受控源走 ``_Base`` 里更一般的 ``drop_terms``，因为它的压降不是常数。）
     """
     if c.kind == "V":
         return -val
     return None
 
 
+class _Base:
+    """把"支路电流法的各个量"都表达成**未知量列的线性组合**。
+
+    ★ 为什么单独一个类：这几组表达式互相引用（节点电压差要压降、
+    受控源压降要节点电压差、支路电流又要受控源），递进关系容易绕晕。
+    集中到一处 + 一个显式的深度上限，比散在装配循环里安全得多。
+    """
+
+    def __init__(self, circuit: Circuit, edges, parent, unk, cols, n_nodes):
+        self.circuit = circuit
+        self.edges = edges
+        self.parent = parent
+        self.unk = unk
+        self.cols = cols
+        self.n_nodes = n_nodes
+        self.known = {c.ref: c for c in circuit.components}
+        self._delta_cache: dict[tuple[int, int], tuple[dict[int, Fraction], Fraction]] = {}
+
+    # ---- 基础量的表达
+
+    def current_terms(self, c, depth: int = 0):
+        """``i_c`` = 未知量线性组合 + 常数。"""
+        if c.kind in ("R",) or c.outputs_voltage:
+            return {self.unk[c.ref]: Fraction(1)}, Fraction(0)
+        if c.kind == "I":
+            return {}, to_frac(c.value)
+        if c.is_controlled:
+            return self.control_terms(c, depth + 1)
+        raise CircuitError(f"{c.ref}: 元件类型 {c.kind} 的电流无法表达")
+
+    def drop_terms(self, c, depth: int = 0):
+        """``drop_c``（沿 declared_direction）= 未知量线性组合 + 常数。"""
+        if c.kind == "R":
+            return {self.unk[c.ref]: to_frac(c.value)}, Fraction(0)
+        if c.kind == "I":
+            return {self.unk[c.ref]: Fraction(1)}, Fraction(0)     # 未知的是它的电压
+        if c.outputs_voltage:
+            if c.kind == "V":
+                return {}, -to_frac(c.value)
+            # ★ 受控源的输出电压就是"控制量"，而沿参考方向（−→+）的压降是
+            #   它的相反数 —— 与理想电压源 `−E` 同一个来路。
+            n, cnst = self.control_terms(c, depth + 1)
+            return {k: -v for k, v in n.items()}, -cnst
+        if c.is_controlled:                     # G / F：电流型，电压是未知量
+            return {self.unk[c.ref]: Fraction(1)}, Fraction(0)
+        raise CircuitError(f"{c.ref}: 元件类型 {c.kind} 的压降无法表达")
+
+    def delta(self, x: int, y: int, depth: int = 0):
+        """``V_x − V_y`` = 未知量线性组合 + 常数（沿生成树唯一路径累加压降）。
+
+        ★ 缓存是必要的：受控源的控制端差、每个回路里的每一段，都会反复问
+        同一对节点。没有缓存时表达式一多就是指数级重复展开。
+        """
+        key = (x, y)
+        hit = self._delta_cache.get(key)
+        if hit is not None:
+            return hit
+        if depth > MAX_EXPR_DEPTH:
+            raise CircuitError(
+                "受控源的控制关系绕成了环（控制量最终又指回它自己）。"
+                "请检查是不是有受控源互相控制，或控制端落在含它自己的回路上。")
+        if x == y:
+            res = ({}, Fraction(0))
+            self._delta_cache[key] = res
+            return res
+
+        acc: dict[int, Fraction] = {}
+        const = Fraction(0)
+        for (u, v, ei) in _tree_path(self.parent, x, y):
+            e_u, e_v, e_ref = self.edges[ei]
+            c = self.known[e_ref]
+            coeffs, cnst = self.drop_terms(c, depth + 1)
+            forward = (u == e_u and v == e_v)
+            sign = 1 if forward else -1
+            for col, co in coeffs.items():
+                acc[col] = acc.get(col, Fraction(0)) + sign * co
+            const += sign * cnst
+        res = ({k: v for k, v in acc.items() if v != 0}, const)
+        self._delta_cache[key] = res
+        return res
+
+    def control_terms(self, c, depth: int = 0):
+        """受控源的**输出量** = 未知量线性组合 + 常数。"""
+        ctrl = c.ctrl
+        if ctrl is None:
+            raise CircuitError(f"{c.ref}: 受控源缺少控制支路")
+        if depth > MAX_EXPR_DEPTH:
+            raise CircuitError(
+                "受控源的控制关系绕成了环（控制量最终又指回它自己）。"
+                "请检查是不是有受控源互相控制。")
+
+        if not ctrl.expr:
+            gain = to_frac(c.value)
+            if ctrl.mode == "V":
+                assert ctrl.nodes is not None
+                x = self.circuit.nodes.index(ctrl.nodes[0])
+                y = self.circuit.nodes.index(ctrl.nodes[1])
+                coeffs, cnst = self.delta(x, y, depth + 1)
+                return ({k: gain * v for k, v in coeffs.items()}, gain * cnst)
+            # 电流控制：采样支路已被 ensure_sense_sources 保证为电压输出元件
+            sense = ctrl.sampling
+            col = self.unk.get(sense)
+            if col is None:
+                raise CircuitError(
+                    f"{c.ref}: 采样支路 {sense!r} 的电流不是可用的未知量"
+                    "（内部一致性错误：探针源应当已经插好）")
+            return {col: gain}, Fraction(0)
+
+        lin = self._resolve_expr(ctrl.expr)
+        acc: dict[int, Fraction] = {}
+        const = Fraction(lin.const)
+        for sym, k in lin.coeffs.items():
+            coeffs, cnst = self._symbol_terms(sym, depth + 1)
+            for col, co in coeffs.items():
+                acc[col] = acc.get(col, Fraction(0)) + k * co
+            const += k * cnst
+        return ({k: v for k, v in acc.items() if v != 0}, const)
+
+    # ---- 表达式的符号翻回未知量
+
+    def _resolve_expr(self, expr: str) -> LinearExpr:
+        return self.circuit.params.resolve_expression(expr)
+
+    def _symbol_terms(self, sym: str, depth: int):
+        table = self.circuit.params
+        p = table.by_symbol(sym)
+        if p is None:
+            raise CircuitError(f"表达式里的 {sym!r} 不在当前参数表里")
+        kind, key = p.binder
+        if kind == "node_u":
+            x = self.circuit.nodes.index(key)
+            y = self.circuit.nodes.index(self.circuit.ref_node)
+            return self.delta(x, y, depth)
+        if kind == "branch_u":
+            return self.drop_terms(self.circuit.by_ref(key), depth)
+        if kind == "branch_i":
+            return self.current_terms(self.circuit.by_ref(key), depth)
+        if kind == "value":
+            comp = self.circuit.by_ref(key)
+            if comp.value is None:
+                raise CircuitError(f"{sym!r} 对应的元件 {key} 还没有数值")
+            return {}, to_frac(comp.value)
+        raise CircuitError(f"未知的绑定种类 {kind!r}")
+
+
 def branch_current_method(circuit: Circuit) -> Solution:
     """支路电流法。返回精确有理数解。"""
+    circuit, sense = ensure_sense_sources(circuit)
     circuit.validate()
     reject_non_dc(circuit)
 
@@ -182,16 +351,12 @@ def branch_current_method(circuit: Circuit) -> Solution:
         )
 
     known = {c.ref: c for c in circuit.components}
-    # 未知量编号：R/V 支路的电流 + I 支路的电压
+    # 未知量编号：电流自由的支路取电流；电流不自由的（I/G/F）取其电压
     unk: dict[str, int] = {}
     cols: list[tuple[str, str]] = []
     for c in circuit.components:
-        if c.kind in ("R", "V"):
-            unk[c.ref] = len(cols)
-            cols.append(("i", c.ref))
-        else:                                    # I：电流已知，取其电压为未知量
-            unk[c.ref] = len(cols)
-            cols.append(("u", c.ref))
+        unk[c.ref] = len(cols)
+        cols.append(("i", c.ref) if c.kind not in ("I", "G", "F") else ("u", c.ref))
     n_unk = len(cols)
 
     n_kcl = n - 1
@@ -202,6 +367,7 @@ def branch_current_method(circuit: Circuit) -> Solution:
             "说明支路集与未知量集配平有误（内部断言）"
         )
 
+    ctx = _Base(circuit, edges, parent, unk, cols, n)
     A: list[list[Fraction]] = [[Fraction(0)] * n_unk for _ in range(n_eq)]
     rhs: list[Fraction] = [Fraction(0)] * n_eq
 
@@ -213,16 +379,17 @@ def branch_current_method(circuit: Circuit) -> Solution:
         kcl_row[i] = len(kcl_row)
     for i, (u, v, ref) in enumerate(edges):
         c = known[ref]
-        val = to_frac(c.value)
-        # 参考方向 from->to 就是 (u, v)
+        # ★ 统一走 current_terms：电阻/电压源是"自身未知量"，
+        #   电流源是常数，G/F 是控制量的线性组合。三种来源一条出口，
+        #   免得"理想源写一处、受控源写另一处"然后其中一处符号写反。
+        coeffs, const = ctx.current_terms(c)
         for node_i, sign in ((u, +1), (v, -1)):
             r = kcl_row.get(node_i)
             if r is None:
                 continue
-            if c.kind == "I":
-                rhs[r] -= sign * val          # 电流已知，移到右端
-            else:
-                A[r][unk[ref]] += sign
+            for col, co in coeffs.items():
+                A[r][col] += sign * co
+            rhs[r] -= sign * const
 
     # ---- (b − n + 1) 条基本回路 KVL：沿回路逐支路累加"压降 = 0"
     # 回路统一由 fundamental_loops() 出，那里带闭合自证，避免拿到断开的"回路"
@@ -236,40 +403,46 @@ def branch_current_method(circuit: Circuit) -> Solution:
         for (x, y, ei) in walk:
             e_u, e_v, e_ref = edges[ei]
             c = known[e_ref]
-            val = to_frac(c.value)
-            # 沿 x->y 行进；支路参考方向是 e_u->e_v
             forward = (x == e_u and y == e_v)
-            if c.kind == "R":
-                # drop = ±R·i
-                A[row][unk[e_ref]] += (val if forward else -val)
-            elif c.kind == "V":
-                d = _declared_drop(c, val)      # = −E
-                rhs[row] -= (d if forward else -d)
-            else:                                  # I：未知的是它的电压
-                A[row][unk[e_ref]] += (1 if forward else -1)
+            sign = 1 if forward else -1
+            coeffs, const = ctx.drop_terms(c)
+            for col, co in coeffs.items():
+                A[row][col] += sign * co
+            rhs[row] -= sign * const
 
     sol_vec = solve_linear(A, rhs, what="支路电流法")
 
+    # ---- 回代：把每一组"未知量线性组合"代入解向量
+    # ★ 直接代入即可，不需要先用节点电压反推受控量 —— 那些组合在装配前
+    #   就已经是"未知量的线性组合"了（见 _Base 的设计说明）。
+    def value_of(coeffs: dict[int, Fraction], const: Fraction) -> Fraction:
+        total = Fraction(const)
+        for col, co in coeffs.items():
+            total += co * sol_vec[col]
+        return total
+
     currents: dict[str, Fraction] = {}
     drops: dict[str, Fraction] = {}
-    for kind, ref in cols:
-        if kind == "i":
-            currents[ref] = sol_vec[unk[ref]]
-    # 电流源的电流是已知量，显式补上（不靠解向量）
     for c in circuit.components:
-        if c.kind == "I":
-            currents[c.ref] = to_frac(c.value)
-
-    # ---- 由支路电流与源值算各支路压降，再沿生成树推全节点电压
-    for c in circuit.components:
-        if c.kind == "R":
-            drops[c.ref] = to_frac(c.value) * currents[c.ref]
-        elif c.kind == "V":
-            drops[c.ref] = _declared_drop(c, to_frac(c.value))   # = −E
-        else:
-            drops[c.ref] = sol_vec[unk[c.ref]]  # I 支路电压 = V_from − V_to
+        cf, cc = ctx.current_terms(c)
+        currents[c.ref] = value_of(cf, cc)
+        df, dc = ctx.drop_terms(c)
+        drops[c.ref] = value_of(df, dc)
 
     node_v = build_node_voltages_from_drops(circuit, drops)
+
+    detail = {
+        "branches": b, "nodes": n, "tree_edges": len(tree),
+        "fundamental_loops": n_loops,
+        "unknowns": [f"{k}({r})" for k, r in cols],
+    }
+    if circuit.controlled:
+        detail["controlled"] = [
+            {"ref": c.ref, "kind": c.kind, "control": c.control_text(),
+             "mode": "自定义表达式" if (c.ctrl and c.ctrl.expr) else "标准形",
+             "i": str(currents.get(c.ref, "")), "u": str(drops.get(c.ref, ""))}
+            for c in circuit.controlled
+        ]
 
     return Solution(
         method="支路电流法(生成树基本回路/精确有理数)",
@@ -277,9 +450,5 @@ def branch_current_method(circuit: Circuit) -> Solution:
         branch_currents=currents,
         branch_drops=drops,
         exact=True,
-        detail={
-            "branches": b, "nodes": n, "tree_edges": len(tree),
-            "fundamental_loops": n_loops,
-            "unknowns": [f"{k}({r})" for k, r in cols],
-        },
+        detail=detail,
     )

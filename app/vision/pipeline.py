@@ -33,6 +33,8 @@ from ..ingest.values import parse_engineering
 from ..ir.model import (
     ALLOWED_KINDS,
     CONFIDENCE_GATE,
+    CONTROLLED_KINDS,
+    CONTROL_NOTE,
     REF_NODE,
     Circuit,
     CircuitError,
@@ -919,11 +921,33 @@ def vlm_payload_to_ir(payload: dict[str, Any], *, name: str = "photo",
                                 f"components[{i}] 不是一个对象，已跳过。"))
             continue
         kind = str(raw.get("kind", "")).strip().upper()
+
+        # ---- ★ 受控源：位图通道**认得出来，但不会替它定型控制关系**。
+        #   为什么不能顺手建出来：``E``/``G``/``H``/``F`` 是"输出量由另一个
+        #   支路的电压/电流决定"的元件，而"控制端接在哪两条节点上""由哪条
+        #   支路的电流控制"这两件事，靠图上读出来是**猜**。猜错的后果不是
+        #   差一点，而是整题答案换个样 —— 而且三法互校与功率守恒全拦不住：
+        #   三条路径共用同一份 IR，会一致地给出同一个错答案。
+        #   所以这里按已定的策略处理：**只标记、交人工定型**，
+        #   并把"怎么补"写清楚，绝不静默丢弃。
+        if kind in CONTROLLED_KINDS:
+            issues.append(Issue(
+                "structural", "vlm_controlled_source",
+                f"components[{i}]（{raw.get('ref') or '未命名'}）是**受控源**："
+                f"{CONTROL_NOTE.get(kind, kind)}。"
+                "位图通道不替它定型控制关系 —— 控制端接在哪、由哪条支路的电流控制，"
+                "从图上读出来只能是猜；猜错会让整题答案换个样，"
+                "而三法互校与功率守恒都发现不了（三条路径共用同一份 IR）。"
+                "已**保留为一处待人工确认**，未纳入本次建模："
+                "请在「手绘」面板里把它画出来并指明控制端（电流控制型还要指出采样支路），"
+                "或在「参数」页里补上它的控制关系。"))
+            continue
+
         if kind not in ALLOWED_KINDS:
             issues.append(Issue(
                 "structural", "vlm_bad_kind",
                 f"components[{i}] 的类型 {raw.get('kind')!r} 不在支持范围 "
-                f"{sorted(ALLOWED_KINDS)}（受控源、变压器等暂不支持），已跳过。"))
+                f"{sorted(ALLOWED_KINDS)}（变压器、器件模型等暂不支持），已跳过。"))
             continue
         nodes = raw.get("nodes")
         if not isinstance(nodes, (list, tuple)) or len(nodes) != 2:
