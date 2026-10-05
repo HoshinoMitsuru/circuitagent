@@ -1,0 +1,112 @@
+# ---------------------------------------------------------------- 探针源
+
+
+def sense_ref_for(target_ref: str, existing: list[str]) -> str:
+    """给探针源分配一个不冲突的位号（首字母必须是 ``V``：它是电压源）。"""
+    used = set(existing)
+    base = f"{SENSE_PREFIX}{target_ref}"
+    if base not in used:
+        return base
+    n = 2
+    while f"{base}{n}" in used:
+        n += 1
+    return f"{base}{n}"
+
+
+def _mid_node(target_ref: str, circuit: Circuit) -> str:
+    """给探针源造一个不会撞名的内部节点名。"""
+    used = set(circuit.nodes) | set(circuit.control_nodes)
+    base = f"ns_{target_ref}"
+    if base not in used:
+        return base
+    n = 2
+    while f"{base}{n}" in used:
+        n += 1
+    return f"{base}{n}"
+
+
+def ensure_sense_sources(circuit: Circuit) -> tuple[Circuit, dict[str, Any]]:
+    """给电流控制型受控源补上 0V 探针源。**幂等。**
+
+    返回 ``(展开后的电路, 记录)``。记录里逐条说明插了什么、为什么插，
+    供报告呈现。没有需要插的就把原电路原样返回（记录里 ``applied=False``）。
+
+    ★ 返回的是**副本**：绝不改调用方手里的电路。求解是"只看不改"的 ——
+    这条很重要，因为插进来的探针会移动元件端子（``R1`` 的 b 端变成内部节点），
+    一旦写回会话，界面上的接线、回绘插图、叠图坐标就全跟着错了。
+    """
+    # ★ 用了自定义表达式的受控源**不需要**探针：表达式里的电流由参数名解析，
+    #   电阻展开成 ``V(a,b)/R``、电压源走 ``I(V)``，都能直接取到。
+    #   给它插一个探针等于往题目里塞了个没人用的元件，还平白多一个节点 ——
+    #   而"多出来的东西"最终会出现在参数表和报告里，是要向用户解释的。
+    needs = [c for c in circuit.components
+             if c.is_controlled and c.ctrl is not None and c.ctrl.mode == "I"
+             and not c.ctrl.expr]
+    if not needs:
+        return circuit, {"applied": False, "inserted": [], "notes": []}
+
+    work = circuit.copy()
+    inserted: list[dict[str, Any]] = []
+    notes: list[str] = []
+
+    for c in work.components:
+        ctrl = c.ctrl
+        if ctrl is None or ctrl.mode != "I" or c.kind not in CONTROLLED_KINDS:
+            continue
+        if ctrl.expr:
+            continue                                  # 见上：表达式不需要探针
+        if ctrl.sense_ref and any(x.ref == ctrl.sense_ref for x in work.components):
+            continue                                  # 已经插过了（幂等）
+        try:
+            target = work.by_ref(ctrl.ref)
+        except CircuitError as e:
+            raise CircuitError(f"{c.ref}: 无法为它准备电流采样支路 —— {e}") from None
+
+        if target.outputs_voltage:
+            # 被采样支路本身就是电压源，直接取它的电流即可，不用插任何东西
+            ctrl.sense_ref = target.ref
+            notes.append(
+                f"{c.ref} 直接取 {target.ref} 的电流（它本身就是电压输出元件，"
+                "无需插入探针）")
+            continue
+
+        # ---- 插一个 0V 电压源：a—[target]—midd—[0V]—b
+        a, b = target.nodes
+        mid = _mid_node(target.ref, work)
+        sense = sense_ref_for(target.ref, work.refs())
+        # ★ 探针的 nodes 顺序 = (b, mid)：declared_direction(电压源) 是
+        #   (nodes[1], nodes[0]) = (mid, b)，即"内部由 mid 流向 b" ——
+        #   与 target 参考方向 a→b 上的电流**同号**。若反过来写，
+        #   取到的电流会整体差一个负号，而三条路径会一致地差这一个负号，
+        #   三法互校根本发现不了。
+        probe = Component(
+            ref=sense, kind="V", nodes=(b, mid), value=0.0,
+            note=(f"测量探针：为 {c.ref} 取得 {target.ref} 的电流而自动插入，"
+                  "**不是题目元件**"),
+        )
+        target.nodes = (a, mid)
+        work.components.append(probe)
+        ctrl.sense_ref = sense
+        inserted.append({
+            "ref": sense, "for": c.ref, "target": ctrl.ref,
+            "node": mid, "target_nodes": [a, mid], "probe_nodes": [b, mid],
+            "why": (f"{c.ref} 是电流控制型受控源，而 SPICE 只能引用电压源的电流 —— "
+                    f"在 {ctrl.ref} 支路里串一个 0V 电压源即可取到同一个电流，"
+                    "电学行为不变"),
+        })
+
+    if inserted:
+        notes.append(
+            f"为取出电流，自动插入了 {len(inserted)} 个 0V 测量探针源"
+            f"（{', '.join(i['ref'] for i in inserted)}）。它们会让节点数与支路数各多，"
+            "报告与参数表里都已单独标出 —— 它们不是题目元件。")
+
+    return work, {
+        "applied": bool(inserted),
+        "inserted": inserted,
+        "notes": notes,
+        "original_components": len(circuit.components),
+        "expanded_components": len(work.components),
+    }
+
+
