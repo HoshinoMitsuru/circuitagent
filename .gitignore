@@ -15,3 +15,4 @@ venv/
 #   而"缺 ngspice"不会报任何错，只会让三法悄悄变成两法。
 dist/
 build/
+_probe_section.txt
